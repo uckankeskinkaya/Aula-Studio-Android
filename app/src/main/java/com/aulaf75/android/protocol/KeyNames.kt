@@ -1,51 +1,95 @@
 package com.aulaf75.android.protocol
 
-/** Ekranda gösterilecek F75 ANSI tuşu. usage == null => Fn. */
-data class PhysicalKey(val label: String, val usage: Int?, val x: Float, val y: Float, val w: Float = 1f) {
+/** Ekranda gösterilecek F75 tuşu. usage == null => Fn. */
+data class PhysicalKey(
+    val label: String,
+    val usage: Int?,
+    val matrixIndex: Int,
+    val x: Float,
+    val y: Float,
+    val w: Float = 1f,
+    val h: Float = 1f,
+) {
     val id: String get() = usage?.toString() ?: "fn"
-    val matrixIndex: Int get() = if (usage == null) F75.FN_MATRIX_INDEX else F75.matrixIndexForUsage(usage)!!
     val isProtected: Boolean get() = matrixIndex in F75.PROTECTED_MATRIX
+}
+
+/** F75'in iki fiziksel düzeni. ISO: Türkçe Q / Avrupa (AltGr + Fn, uzun Enter). */
+enum class KeyboardLayout(val title: String) {
+    ANSI("ANSI (ABD)"),
+    ISO("ISO (Türkçe Q / Avrupa)");
+
+    val keys: List<PhysicalKey> by lazy { F75Layout.build(this) }
+
+    /** Atanabilir kaynak tuşların matris indeksleri (F1–F12 ve Fn konumları hariç). */
+    val sourceIndices: Set<Int> by lazy { keys.filter { !it.isProtected }.map { it.matrixIndex }.toSet() }
+
+    fun keyAt(matrixIndex: Int): PhysicalKey? = keys.firstOrNull { it.matrixIndex == matrixIndex }
 }
 
 object F75Layout {
     const val WIDTH = 16.25f
     const val HEIGHT = 6.3f
 
-    val KEYS: List<PhysicalKey> = buildList {
-        fun add(l: String, u: Int?, x: Float, y: Float, w: Float = 1f) = add(PhysicalKey(l, u, x, y, w))
+    /** ISO'ya özgü matris konumları (aula-studio FR/ISO KB.ini kanıtı). */
+    private const val ISO_HASH_INDEX = 75 // HID 0x32 (Non-US #), TR klavyede ","
+    private const val ISO_BACKSLASH_INDEX = 76 // HID 0x64 (Non-US \), TR klavyede "<"
+
+    fun build(layout: KeyboardLayout): List<PhysicalKey> = buildList {
+        val iso = layout == KeyboardLayout.ISO
+        fun add(l: String, u: Int?, x: Float, y: Float, w: Float = 1f, h: Float = 1f, index: Int? = null) =
+            add(PhysicalKey(l, u, index ?: F75.matrixIndexForUsage(u ?: -1)!!, x, y, w, h))
+
         add("Esc", 41, 0f, 0f)
         for (i in 1..12) add("F$i", 57 + i, 1.5f + i - 1 + ((i - 1) / 4) * 0.25f, 0f)
-        listOf("`" to 53, "1" to 30, "2" to 31, "3" to 32, "4" to 33, "5" to 34, "6" to 35, "7" to 36,
-            "8" to 37, "9" to 38, "0" to 39, "-" to 45, "=" to 46)
-            .forEachIndexed { i, (l, u) -> add(l, u, i.toFloat(), 1.3f) }
+        val row1 = if (iso) listOf("\"", "1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "*", "-")
+        else listOf("`", "1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "-", "=")
+        val row1Usages = listOf(53, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 45, 46)
+        row1.forEachIndexed { i, l -> add(l, row1Usages[i], i.toFloat(), 1.3f) }
         add("Bksp", 42, 13f, 1.3f, 2f)
         add("Del", 76, 15.25f, 1.3f)
+
         add("Tab", 43, 0f, 2.3f, 1.5f)
         "QWERTYUIOP".forEachIndexed { i, c -> add(c.toString(), c.code - 61, 1.5f + i, 2.3f) }
-        add("[", 47, 11.5f, 2.3f)
-        add("]", 48, 12.5f, 2.3f)
-        add("\\", 49, 13.5f, 2.3f, 1.5f)
+        add(if (iso) "Ğ" else "[", 47, 11.5f, 2.3f)
+        add(if (iso) "Ü" else "]", 48, 12.5f, 2.3f)
+        if (iso) add("Enter", 40, 13.75f, 2.3f, 1.25f, 2f)
+        else add("\\", 49, 13.5f, 2.3f, 1.5f)
         add("PgUp", 75, 15.25f, 2.3f)
+
         add("Caps", 57, 0f, 3.3f, 1.75f)
         "ASDFGHJKL".forEachIndexed { i, c -> add(c.toString(), c.code - 61, 1.75f + i, 3.3f) }
-        add(";", 51, 10.75f, 3.3f)
-        add("'", 52, 11.75f, 3.3f)
-        add("Enter", 40, 12.75f, 3.3f, 2.25f)
+        add(if (iso) "Ş" else ";", 51, 10.75f, 3.3f)
+        add(if (iso) "İ" else "'", 52, 11.75f, 3.3f)
+        if (iso) add(",", 50, 12.75f, 3.3f, index = ISO_HASH_INDEX)
+        else add("Enter", 40, 12.75f, 3.3f, 2.25f)
         add("PgDn", 78, 15.25f, 3.3f)
-        add("Shift", 225, 0f, 4.3f, 2.25f)
+
+        if (iso) {
+            add("Shift", 225, 0f, 4.3f, 1.25f)
+            add("<", 100, 1.25f, 4.3f, index = ISO_BACKSLASH_INDEX)
+        } else {
+            add("Shift", 225, 0f, 4.3f, 2.25f)
+        }
         "ZXCVBNM".forEachIndexed { i, c -> add(c.toString(), c.code - 61, 2.25f + i, 4.3f) }
-        add(",", 54, 9.25f, 4.3f)
-        add(".", 55, 10.25f, 4.3f)
-        add("/", 56, 11.25f, 4.3f)
+        add(if (iso) "Ö" else ",", 54, 9.25f, 4.3f)
+        add(if (iso) "Ç" else ".", 55, 10.25f, 4.3f)
+        add(if (iso) "." else "/", 56, 11.25f, 4.3f)
         add("Shift", 229, 12.25f, 4.3f, 1.75f)
         add("↑", 82, 14.25f, 4.3f)
         add("End", 77, 15.25f, 4.3f)
+
         add("Ctrl", 224, 0f, 5.3f, 1.25f)
         add("Win", 227, 1.25f, 5.3f, 1.25f)
         add("Alt", 226, 2.5f, 5.3f, 1.25f)
         add("Space", 44, 3.75f, 5.3f, 6.25f)
-        add("Fn", null, 10f, 5.3f, 1.25f)
-        add("Ctrl", 228, 11.25f, 5.3f, 1.25f)
+        if (iso) {
+            add("AltGr", 230, 10f, 5.3f, 1.25f, index = F75.FN_MATRIX_INDEX)
+            add("Fn", null, 11.25f, 5.3f, 1.25f, index = F75.ISO_FN_MATRIX_INDEX)
+        } else {
+            add("Fn", null, 10f, 5.3f, 1.25f, index = F75.FN_MATRIX_INDEX)
+            add("Ctrl", 228, 11.25f, 5.3f, 1.25f)
+        }
         add("←", 80, 13.25f, 5.3f)
         add("↓", 81, 14.25f, 5.3f)
         add("→", 79, 15.25f, 5.3f)
@@ -78,12 +122,12 @@ object KeyNames {
         put(39, "0")
         putAll(
             mapOf(
-                40 to "Enter", 41 to "Esc", 42 to "Backspace", 43 to "Tab", 44 to "Space", 45 to "-", 46 to "=",
-                47 to "[", 48 to "]", 49 to "\\", 50 to "# (ISO)", 51 to ";", 52 to "'", 53 to "`", 54 to ",",
-                55 to ".", 56 to "/", 57 to "Caps Lock", 70 to "Print Screen", 71 to "Scroll Lock", 72 to "Pause",
+                40 to "Enter", 41 to "Esc", 42 to "Backspace", 43 to "Tab", 44 to "Space", 45 to "- / *", 46 to "= / -",
+                47 to "[ / Ğ", 48 to "] / Ü", 49 to "\\ (ANSI)", 50 to "# / , (ISO)", 51 to "; / Ş", 52 to "' / İ",
+                53 to "` / \"", 54 to ", / Ö", 55 to ". / Ç", 56 to "/ / .", 57 to "Caps Lock", 70 to "Print Screen", 71 to "Scroll Lock", 72 to "Pause",
                 73 to "Insert", 74 to "Home", 75 to "Page Up", 76 to "Delete", 77 to "End", 78 to "Page Down",
                 79 to "→", 80 to "←", 81 to "↓", 82 to "↑", 83 to "Num Lock", 84 to "Num /", 85 to "Num *",
-                86 to "Num -", 87 to "Num +", 88 to "Num Enter", 99 to "Num .", 100 to "\\ (ISO)",
+                86 to "Num -", 87 to "Num +", 88 to "Num Enter", 99 to "Num .", 100 to "\\ / < (ISO)",
                 101 to "Menü (Uygulama)", 102 to "Power", 103 to "Num =",
                 0xe0 to "Sol Ctrl", 0xe1 to "Sol Shift", 0xe2 to "Sol Alt", 0xe3 to "Sol Win",
                 0xe4 to "Sağ Ctrl", 0xe5 to "Sağ Shift", 0xe6 to "Sağ Alt", 0xe7 to "Sağ Win",

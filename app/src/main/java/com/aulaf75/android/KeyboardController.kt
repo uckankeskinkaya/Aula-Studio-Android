@@ -3,8 +3,8 @@ package com.aulaf75.android
 import com.aulaf75.android.protocol.ColorTable
 import com.aulaf75.android.protocol.ConfigRegion
 import com.aulaf75.android.protocol.F75
-import com.aulaf75.android.protocol.F75Layout
 import com.aulaf75.android.protocol.KeyAction
+import com.aulaf75.android.protocol.KeyboardLayout
 import com.aulaf75.android.protocol.Keymap
 import com.aulaf75.android.protocol.Layer
 import com.aulaf75.android.protocol.PerKeyColors
@@ -21,8 +21,9 @@ data class KeyboardData(
     val perKey: PerKeyColors?,
     val ansiError: String?,
     val readErrors: List<String>,
+    val layout: KeyboardLayout? = null,
 ) {
-    val mappingAllowed: Boolean get() = ansiError == null && base != null
+    val mappingAllowed: Boolean get() = layout != null && base != null
     fun keymap(layer: Layer) = if (layer == Layer.BASE) base else fn
 }
 
@@ -54,9 +55,11 @@ class KeyboardController(private val io: ReportIo, private val backup: (String, 
         val base = runCatching { readKeymap(Layer.BASE) }.onFailure { errors += "Ana katman: ${it.message}" }.getOrNull()
         val fn = runCatching { readKeymap(Layer.FN) }.onFailure { errors += "Fn katmanı: ${it.message}" }.getOrNull()
         val perKey = runCatching { readPerKey() }.onFailure { errors += "Tuş renkleri: ${it.message}" }.getOrNull()
+        val layout = base?.detectLayout()
         val ansiError = if (base == null) "Ana tuş haritası okunamadı"
-        else runCatching { base.validateAnsiFnPosition() }.exceptionOrNull()?.message
-        return KeyboardData(config, palette, base, fn, perKey, ansiError, errors)
+        else if (layout == null) runCatching { base.requireLayout() }.exceptionOrNull()?.message
+        else null
+        return KeyboardData(config, palette, base, fn, perKey, ansiError, errors, layout)
     }
 
     private fun stale(): Nothing =
@@ -86,11 +89,12 @@ class KeyboardController(private val io: ReportIo, private val backup: (String, 
 
     fun applyRemap(current: KeyboardData, layer: Layer, changes: Map<Int, KeyAction>, label: String): KeyboardData {
         val base = readKeymap(Layer.BASE)
-        base.validateAnsiFnPosition()
+        val layout = base.requireLayout()
+        if (layout != current.layout) stale()
         val cur = if (layer == Layer.BASE) base else readKeymap(Layer.FN)
         if (cur != current.keymap(layer)) stale()
         for ((index, action) in changes) {
-            if (index !in sourceIndices) throw ProtocolException("Bu tuş değiştirilemez")
+            if (index !in layout.sourceIndices) throw ProtocolException("Bu tuş değiştirilemez")
             action.validate()
         }
         val next = cur.with(changes.filter { (i, a) -> !cur.matches(i, a) })
@@ -108,7 +112,7 @@ class KeyboardController(private val io: ReportIo, private val backup: (String, 
 
     /** Tuş başına RGB: önce 06 bankası, sonra ayarlar özel moda (21) alınır. */
     fun applyPerKey(current: KeyboardData, changes: Map<Int, Rgb>, label: String): KeyboardData {
-        readKeymap(Layer.BASE).validateAnsiFnPosition()
+        if (readKeymap(Layer.BASE).requireLayout() != current.layout) stale()
         val cur = readPerKey()
         val c = readConfig()
         if (cur != current.perKey || c != current.config) stale()
@@ -133,6 +137,7 @@ class KeyboardController(private val io: ReportIo, private val backup: (String, 
         val notes = mutableListOf<String>()
         saved.palette.validateForWrite()
         var state = current
+        val sources = (current.layout ?: KeyboardLayout.ANSI).sourceIndices
         // Önce tuş haritaları ve tuş renkleri (ayar yazımı en sonda tüm modu geri getirir).
         for (layer in Layer.values()) {
             val s = saved.keymap(layer) ?: continue
@@ -140,7 +145,7 @@ class KeyboardController(private val io: ReportIo, private val backup: (String, 
             for (p in F75.PROTECTED_MATRIX) if (!cur.raw(p).contentEquals(s.raw(p)))
                 throw ProtocolException("Yedekteki korumalı tuş kayıtları farklı; bu yedek başka bir revizyona ait olabilir. Geri yükleme yapılmadı.")
             val changes = mutableMapOf<Int, ByteArray>()
-            for (i in sourceIndices) {
+            for (i in sources) {
                 val rec = s.raw(i)
                 if (layer == Layer.BASE && rec.all { it.toInt() == 0 })
                     throw ProtocolException("Yedek bir tuşu devre dışı bırakırdı; geri yükleme yapılmadı.")
@@ -178,9 +183,6 @@ class KeyboardController(private val io: ReportIo, private val backup: (String, 
     }
 
     companion object {
-        /** Değiştirilebilir fiziksel kaynak tuşlar (F1–F12 ve Fn hariç). */
-        val sourceIndices: Set<Int> = F75Layout.KEYS.filter { !it.isProtected }.map { it.matrixIndex }.toSet()
-
         fun identityText(id: ByteArray) = id.hex()
     }
 }

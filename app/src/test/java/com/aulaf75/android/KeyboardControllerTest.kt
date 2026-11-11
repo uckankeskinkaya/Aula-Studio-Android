@@ -138,7 +138,28 @@ class KeyboardControllerTest {
         assertTrue(dev.writes.isEmpty())
     }
 
-    @Test fun nonAnsiLayoutBlocksMapping() {
+    @Test fun isoKeyboardRemapsTurkishKeys() {
+        val base = dev.keymaps[Layer.BASE]!!
+        // ISO F75: 53 = AltGr (modifier 0x40), 59 = Fn, 75 = Non-US # (","), 76 = Non-US \\ ("<")
+        byteArrayOf(0, 0x40, 0, 0).copyInto(base, 8 + 4 * 53)
+        byteArrayOf(13, 0, 0, 0).copyInto(base, 8 + 4 * 59)
+        byteArrayOf(0, 0, 0, 50).copyInto(base, 8 + 4 * 75)
+        byteArrayOf(0, 0, 0, 100).copyInto(base, 8 + 4 * 76)
+        val d = c.readAll()
+        assertEquals(com.aulaf75.android.protocol.KeyboardLayout.ISO, d.layout)
+        assertTrue(d.mappingAllowed)
+        val after = c.applyRemap(d, Layer.BASE, mapOf(76 to KeyAction(2, 0xe9)), "r")
+        assertTrue(after.base!!.matches(76, KeyAction(2, 0xe9)))
+        assertThrows(ProtocolException::class.java) { c.applyRemap(after, Layer.BASE, mapOf(59 to KeyAction(0, 4)), "r") }
+        assertThrows(ProtocolException::class.java) { c.applyRemap(after, Layer.BASE, mapOf(53 to KeyAction(0, 4)), "r") }
+        val p = c.applyPerKey(after, mapOf(59 to Rgb(0, 255, 0), 76 to Rgb(255, 0, 0)), "p")
+        assertEquals(Rgb(0, 255, 0), p.perKey!!.get(59))
+        val (restored, _) = c.restore(p, d)
+        assertEquals(d.base, restored.base)
+        assertEquals(d.perKey, restored.perKey)
+    }
+
+    @Test fun unknownLayoutBlocksMapping() {
         dev.keymaps[Layer.BASE]!![8 + 4 * 53] = 0
         val d = c.readAll()
         assertTrue(!d.mappingAllowed)

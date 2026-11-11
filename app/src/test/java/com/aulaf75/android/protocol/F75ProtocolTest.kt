@@ -112,13 +112,19 @@ class F75ProtocolTest {
         assertThrows(ProtocolException::class.java) { F75.decodeKeymap(Layer.BASE, reply) }
     }
 
-    @Test fun ansiFnValidation() {
+    @Test fun layoutDetection() {
         val raw = emptyKeymap(Layer.BASE)
-        assertThrows(ProtocolException::class.java) { Keymap.parse(raw).validateAnsiFnPosition() }
+        assertEquals(null, Keymap.parse(raw).detectLayout())
         raw[8 + 4 * 53] = 13
-        Keymap.parse(raw).validateAnsiFnPosition()
+        assertEquals(KeyboardLayout.ANSI, Keymap.parse(raw).detectLayout())
         raw[8 + 4 * 59] = 13
-        assertThrows(ProtocolException::class.java) { Keymap.parse(raw).validateAnsiFnPosition() }
+        assertEquals(null, Keymap.parse(raw).detectLayout())
+        raw[8 + 4 * 53] = 0
+        assertEquals(KeyboardLayout.ISO, Keymap.parse(raw).detectLayout())
+        assertThrows(ProtocolException::class.java) { Keymap.parse(emptyKeymap(Layer.BASE)).requireLayout() }
+        // Fn katmanı düzen belirleyemez
+        val fnRaw = emptyKeymap(Layer.FN).also { it[8 + 4 * 53] = 13 }
+        assertEquals(null, Keymap.parse(fnRaw).detectLayout())
     }
 
     @Test fun perKeyPlanes() {
@@ -132,14 +138,33 @@ class F75ProtocolTest {
     @Test fun matrixTable() {
         assertEquals(9, F75.matrixIndexForUsage(4)) // A
         assertEquals(10, F75.matrixIndexForUsage(29)) // Z
-        assertEquals(59, F75.matrixIndexForUsage(228)) // Sağ Ctrl
+        assertEquals(59, F75.matrixIndexForUsage(228)) // Sağ Ctrl (ANSI)
         assertEquals(80, F75.matrixIndexForUsage(49)) // ANSI \
         assertEquals(null, F75.matrixIndexForUsage(50))
-        val indices = F75Layout.KEYS.map { it.matrixIndex }
-        assertEquals(80, indices.size) // 79 ANSI tuşu + Fn
-        assertEquals(indices.size, indices.toSet().size)
-        assertEquals(13, F75Layout.KEYS.count { it.isProtected })
-        assertFalse(F75Layout.KEYS.first { it.label == "A" }.isProtected)
+        val ansi = KeyboardLayout.ANSI.keys.map { it.matrixIndex }
+        assertEquals(80, ansi.size) // 79 ANSI tuşu + Fn
+        assertEquals(ansi.size, ansi.toSet().size)
+        assertFalse(KeyboardLayout.ANSI.keys.first { it.label == "A" }.isProtected)
+        assertEquals(53, KeyboardLayout.ANSI.keys.first { it.label == "Fn" }.matrixIndex)
+    }
+
+    @Test fun isoTurkishLayout() {
+        val keys = KeyboardLayout.ISO.keys
+        val idx = keys.map { it.matrixIndex }
+        assertEquals(81, idx.size) // ISO: +1 tuş (< ve , ayrı, sağ Ctrl yerine AltGr)
+        assertEquals(idx.size, idx.toSet().size)
+        assertEquals(59, keys.first { it.label == "Fn" }.matrixIndex)
+        assertEquals(53, keys.first { it.label == "AltGr" }.matrixIndex)
+        assertEquals(75, keys.first { it.usage == 50 }.matrixIndex)
+        assertEquals(76, keys.first { it.usage == 100 }.matrixIndex)
+        assertEquals(81, keys.first { it.label == "Enter" }.matrixIndex)
+        assertTrue(keys.none { it.usage == 49 || it.usage == 228 })
+        // Fn konumları ve F1–F12 her iki düzende de korunur
+        assertTrue(keys.first { it.label == "Fn" }.isProtected)
+        assertTrue(keys.first { it.label == "AltGr" }.isProtected)
+        assertEquals(14, keys.count { it.isProtected })
+        assertFalse(59 in KeyboardLayout.ISO.sourceIndices || 53 in KeyboardLayout.ISO.sourceIndices)
+        assertTrue(75 in KeyboardLayout.ISO.sourceIndices && 76 in KeyboardLayout.ISO.sourceIndices)
     }
 
     @Test fun identity() {

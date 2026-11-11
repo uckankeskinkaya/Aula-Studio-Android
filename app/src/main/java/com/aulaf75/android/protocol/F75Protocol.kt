@@ -29,8 +29,12 @@ object F75 {
 
     val SLEEP_SECONDS = listOf(0, 60, 90, 120, 180, 240, 300, 600, 900, 1200)
 
-    /** F1..F12 ve Fn: firmware kontrol tuşları, kaynak olarak değiştirilemez. */
-    val PROTECTED_MATRIX = setOf(12, 18, 24, 30, 36, 42, 48, 54, 60, 66, 72, 78, FN_MATRIX_INDEX)
+    /** ISO düzende Fn tuşunun matris konumu (ANSI'de bu konum sağ Ctrl'dir). */
+    const val ISO_FN_MATRIX_INDEX = 59
+
+    /** F1..F12 ve iki olası Fn konumu (53 ve 59): firmware kontrol tuşları, kaynak olarak değiştirilemez.
+     *  Güvenlik için 53 ve 59 her iki düzende de korunur (ANSI sağ Ctrl / ISO AltGr de bu yüzden değiştirilemez). */
+    val PROTECTED_MATRIX = setOf(12, 18, 24, 30, 36, 42, 48, 54, 60, 66, 72, 78, FN_MATRIX_INDEX, ISO_FN_MATRIX_INDEX)
 
     val EFFECT_NAMES = linkedMapOf(
         0 to "Kapalı",
@@ -382,17 +386,25 @@ class Keymap private constructor(val bytes: ByteArray) {
         return Keymap(n)
     }
 
-    /** Fn tuşu ANSI konumunda (53) değilse eşleme/per-key yazma engellenir. */
-    fun validateAnsiFnPosition() {
-        val fn = raw(F75.FN_MATRIX_INDEX)
-        val slot59 = raw(59)
-        val fnMarker = byteArrayOf(13, 0, 0, 0)
-        if (layer != Layer.BASE || !fn.contentEquals(fnMarker) || slot59.contentEquals(fnMarker))
-            throw ProtocolException(
-                "Fn tuşu beklenen ANSI konumunda değil (farklı revizyon/ISO düzen olabilir). " +
-                    "Güvenlik için tuş atama ve tuş RGB yazma kapalı."
-            )
+    /**
+     * Fn kaydının (0D 00 00 00) konumundan fiziksel düzeni belirler:
+     * 53 => ANSI, 59 => ISO (aula-studio FR/ISO paket kanıtı). Belirsizse null.
+     */
+    fun detectLayout(): KeyboardLayout? {
+        if (layer != Layer.BASE) return null
+        val marker = byteArrayOf(13, 0, 0, 0)
+        val at53 = raw(F75.FN_MATRIX_INDEX).contentEquals(marker)
+        val at59 = raw(F75.ISO_FN_MATRIX_INDEX).contentEquals(marker)
+        return when {
+            at53 && !at59 -> KeyboardLayout.ANSI
+            at59 && !at53 -> KeyboardLayout.ISO
+            else -> null
+        }
     }
+
+    fun requireLayout(): KeyboardLayout = detectLayout() ?: throw ProtocolException(
+        "Fn tuşunun konumu tanınmadı (bilinmeyen revizyon). Güvenlik için tuş atama ve tuş RGB yazma kapalı."
+    )
 
     override fun equals(other: Any?) = other is Keymap && other.bytes.contentEquals(bytes)
     override fun hashCode() = bytes.contentHashCode()
