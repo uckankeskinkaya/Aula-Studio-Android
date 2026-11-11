@@ -41,6 +41,7 @@ data class UiState(
     val data: KeyboardData? = null,
     val experimental: Boolean = false,
     val backups: List<File> = emptyList(),
+    val usbDevices: List<String>? = null,
 )
 
 class MainViewModel(app: Application) : AndroidViewModel(app) {
@@ -130,11 +131,23 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch(Dispatchers.Main) { ui = ui.copy(data = d) }
     }
 
+    fun scanUsb() {
+        ui = ui.copy(usbDevices = runCatching { F75Usb.describeAll(usbManager) }.getOrElse { listOf("Tarama hatası: ${it.message}") })
+    }
+
     fun connect() {
         if (ui.busy) return
+        scanUsb()
         val device = F75Usb.find(usbManager)
         if (device == null) {
-            ui = ui.copy(error = "AULA F75 bulunamadı. Klavyeyi USB-C kablo + OTG adaptörle bağla ve klavyeyi kablolu moda al.")
+            val n = ui.usbDevices?.size ?: 0
+            ui = ui.copy(
+                error = if (n == 0)
+                    "Tablet hiçbir USB cihazı görmüyor. Klavye büyük ihtimalle sadece şarj oluyor: klavyenin arkasındaki mod anahtarını " +
+                        "KABLO (USB) konumuna al, kabloyu çıkarıp tak. Klavyeyle tablete yazı yazabiliyorsan bağlantı doğrudur."
+                else
+                    "AULA F75 bulunamadı. Tablet $n USB cihazı görüyor; aşağıdaki 'USB teşhis' listesini bana gönder."
+            )
             return
         }
         if (!usbManager.hasPermission(device)) {

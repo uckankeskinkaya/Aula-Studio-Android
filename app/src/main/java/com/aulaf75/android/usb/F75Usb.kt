@@ -15,8 +15,30 @@ import java.io.IOException
  * USB kontrol aktarımı karşılığıdır (SET_REPORT / GET_REPORT, Feature tipi).
  */
 object F75Usb {
-    fun find(manager: UsbManager): UsbDevice? = manager.deviceList.values.firstOrNull {
-        it.vendorId == F75.VENDOR_ID && it.productId == F75.PRODUCT_ID
+    /** Önce bilinen kablolu F75 (258a:010c), yoksa aynı üreticinin başka bir PID'i denenir.
+     *  Asıl doğrulama bağlantıdan sonra model kimliği okumasıyla yapılır. */
+    fun find(manager: UsbManager): UsbDevice? {
+        val all = manager.deviceList.values
+        return all.firstOrNull { it.vendorId == F75.VENDOR_ID && it.productId == F75.PRODUCT_ID }
+            ?: all.firstOrNull { it.vendorId == F75.VENDOR_ID && hasInterface(it, F75.CONFIG_INTERFACE) }
+    }
+
+    private fun hasInterface(d: UsbDevice, id: Int) = (0 until d.interfaceCount).any { d.getInterface(it).id == id }
+
+    /** Teşhis: tabletin gördüğü tüm USB cihazları. */
+    fun describeAll(manager: UsbManager): List<String> = manager.deviceList.values.map { d ->
+        val intfs = (0 until d.interfaceCount).joinToString(", ") {
+            val i = d.getInterface(it)
+            "#${i.id} sınıf ${i.interfaceClass}"
+        }
+        val name = listOfNotNull(d.manufacturerName, d.productName).joinToString(" ").ifBlank { "(adsız)" }
+        val note = when {
+            d.vendorId == F75.VENDOR_ID && d.productId == F75.PRODUCT_ID -> " ← kablolu F75"
+            d.vendorId == F75.VENDOR_ID -> " ← AULA üreticisi, farklı PID"
+            d.vendorId == 0x3554 -> " ← AULA 2.4G alıcısı (ayar için kablo gerekir)"
+            else -> ""
+        }
+        "%04x:%04x %s [%s]%s".format(d.vendorId, d.productId, name, intfs, note)
     }
 
     fun open(manager: UsbManager, device: UsbDevice): F75Connection {

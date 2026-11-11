@@ -156,6 +156,14 @@ private fun StatusTab(vm: MainViewModel) {
             style = MaterialTheme.typography.bodySmall,
         )
     }
+    Section("USB teşhis") {
+        OutlinedButton(onClick = vm::scanUsb) { Text("USB cihazlarını tara") }
+        when (val list = ui.usbDevices) {
+            null -> Text("Tabletin gördüğü USB cihazlarını listelemek için dokun.", style = MaterialTheme.typography.bodySmall)
+            else -> if (list.isEmpty()) Text("Hiç USB cihazı görünmüyor (klavye sadece şarj oluyor olabilir).")
+            else list.forEach { Text(it, style = MaterialTheme.typography.bodySmall) }
+        }
+    }
     ui.data?.let { d ->
         Section("Klavyedeki ayarlar") {
             val effect = d.config.effectId
