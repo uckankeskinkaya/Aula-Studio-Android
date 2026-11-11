@@ -220,6 +220,27 @@ class ConfigRegion private constructor(val bytes: ByteArray) {
         return ConfigRegion(n)
     }
 
+    /** Yalnızca seçili hazır efektin parlaklık baytını değiştirir (orijinal projede donanımda test edilmiş tek yazma). */
+    fun withPresetBrightness(value: Int): ConfigRegion {
+        if (value !in 0..9) throw ProtocolException("Parlaklık 0..9 olmalı")
+        val effect = effectId
+        if (effect !in 1..18) throw ProtocolException("Seçili modda (kapalı/özel) parlaklık alanı yok")
+        lighting()
+        return ConfigRegion(bytes.copyOf().also { it[56 + effect * 2] = value.toByte() })
+    }
+
+    /** Bir efektin klavyede kayıtlı parametreleri (efekt seçilmemiş olsa da). */
+    fun storedSettings(effect: Int): LightingSettings {
+        if (effect !in 1..18) return LightingSettings(effect, 0, 0, false)
+        val o = 56 + effect * 2
+        return LightingSettings(
+            effect,
+            bytes[o].u().coerceIn(0, 9),
+            (bytes[o + 1].u() shr 4).coerceIn(0, 4),
+            bytes[o + 1].u() and 0x0f == 7,
+        )
+    }
+
     fun sleepSeconds(): Int? = (bytes[24].u() * 30).takeIf { it in F75.SLEEP_SECONDS }
 
     fun withSleepSeconds(seconds: Int): ConfigRegion {

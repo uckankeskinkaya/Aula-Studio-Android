@@ -136,7 +136,7 @@ class F75ProtocolTest {
         assertEquals(80, F75.matrixIndexForUsage(49)) // ANSI \
         assertEquals(null, F75.matrixIndexForUsage(50))
         val indices = F75Layout.KEYS.map { it.matrixIndex }
-        assertEquals(81, indices.size)
+        assertEquals(80, indices.size) // 79 ANSI tuşu + Fn
         assertEquals(indices.size, indices.toSet().size)
         assertEquals(13, F75Layout.KEYS.count { it.isProtected })
         assertFalse(F75Layout.KEYS.first { it.label == "A" }.isProtected)
