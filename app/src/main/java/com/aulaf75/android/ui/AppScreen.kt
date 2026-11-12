@@ -58,12 +58,13 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.aulaf75.android.R
 
-enum class Destination(@StringRes val title: Int, val icon: ImageVector) {
-    OVERVIEW(R.string.nav_overview, Icons.Rounded.Dashboard),
-    LIGHTING(R.string.nav_lighting, Icons.Rounded.Lightbulb),
-    PER_KEY(R.string.nav_per_key, Icons.Rounded.Palette),
-    MAPPING(R.string.nav_mapping, Icons.Rounded.Keyboard),
-    SETTINGS(R.string.nav_settings, Icons.Rounded.Settings),
+/** [title] is the screen heading, [label] the short navigation label. */
+enum class Destination(@StringRes val title: Int, @StringRes val label: Int, val icon: ImageVector) {
+    OVERVIEW(R.string.nav_overview, R.string.navs_overview, Icons.Rounded.Dashboard),
+    LIGHTING(R.string.nav_lighting, R.string.navs_lighting, Icons.Rounded.Lightbulb),
+    PER_KEY(R.string.nav_per_key, R.string.navs_per_key, Icons.Rounded.Palette),
+    MAPPING(R.string.nav_mapping, R.string.navs_mapping, Icons.Rounded.Keyboard),
+    SETTINGS(R.string.nav_settings, R.string.navs_settings, Icons.Rounded.Settings),
 }
 
 /** Root of the UI. Stateless: everything comes from [state] and goes out through [actions]. */
@@ -85,7 +86,7 @@ fun AppScreen(state: UiState, actions: AppActions, initial: Destination = Destin
                             NavigationRailItem(
                                 selected = dest == d, onClick = { dest = d },
                                 icon = { Icon(d.icon, null) },
-                                label = { Text(stringResource(d.title), maxLines = 1) },
+                                label = { Text(stringResource(d.label), maxLines = 1) },
                             )
                         }
                     }
@@ -99,7 +100,7 @@ fun AppScreen(state: UiState, actions: AppActions, initial: Destination = Destin
                             NavigationBarItem(
                                 selected = dest == d, onClick = { dest = d },
                                 icon = { Icon(d.icon, null) },
-                                label = { Text(stringResource(d.title), maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                                label = { Text(stringResource(d.label), maxLines = 1, overflow = TextOverflow.Ellipsis) },
                             )
                         }
                     }

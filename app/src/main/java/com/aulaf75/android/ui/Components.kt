@@ -241,7 +241,7 @@ fun KeyboardEditor(
     ) {
         val unit = (maxWidth / F75Geometry.WIDTH).coerceIn(34.dp, 60.dp)
         val scroll = rememberScrollState()
-        Box(Modifier.horizontalScroll(scroll)) {
+        Box(Modifier.fillMaxWidth().horizontalScroll(scroll), contentAlignment = Alignment.Center) {
             Box(Modifier.size(unit * F75Geometry.WIDTH, unit * F75Geometry.HEIGHT)) {
                 for (k in layout.keys) {
                     val bg = fill(k)

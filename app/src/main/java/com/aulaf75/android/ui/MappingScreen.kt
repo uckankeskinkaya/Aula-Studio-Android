@@ -86,10 +86,21 @@ fun MappingScreen(state: UiState, actions: AppActions, data: KeyboardData, wide:
             NoticeCard(stringResource(R.string.err_bad_reply))
             return@SectionCard
         }
+        val turkish = isTurkish() && layout == KeyboardLayout.ISO
         KeyboardEditor(
             layout = layout,
-            fill = { k -> if (pending.containsKey(k.matrixIndex)) scheme.tertiary else scheme.surfaceContainerHighest },
-            label = { k -> pending[k.matrixIndex]?.let { actionShort(it) } ?: recordShort(map.raw(k.matrixIndex)) },
+            fill = { k ->
+                when {
+                    pending.containsKey(k.matrixIndex) -> scheme.tertiary
+                    isRemapped(map, k) -> scheme.primaryContainer
+                    else -> scheme.surfaceContainerHighest
+                }
+            },
+            label = { k ->
+                pending[k.matrixIndex]?.let { actionShort(it) }
+                    ?: if (!isRemapped(map, k) && k.usage != null) k.legend(turkish).ifBlank { "Space" }
+                    else recordShort(map.raw(k.matrixIndex))
+            },
             selected = { editing == it.matrixIndex },
             enabled = { !it.isProtected },
             onKey = { editing = it.matrixIndex },
@@ -124,6 +135,12 @@ fun MappingScreen(state: UiState, actions: AppActions, data: KeyboardData, wide:
             onDismiss = { editing = null },
         )
     }
+}
+
+/** True when the key no longer sends its own key code (shown highlighted). Fn and vendor actions count as remapped. */
+private fun isRemapped(map: Keymap, k: com.aulaf75.android.protocol.PhysicalKey): Boolean {
+    val usage = k.usage ?: return false
+    return runCatching { !map.matches(k.matrixIndex, KeyAction(0, usage)) }.getOrDefault(true)
 }
 
 @Composable

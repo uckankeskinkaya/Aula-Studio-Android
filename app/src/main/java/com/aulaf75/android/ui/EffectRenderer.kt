@@ -62,7 +62,7 @@ object EffectRenderer {
             6 -> hue(angle + t * 90f * s)
             7 -> {
                 val r = frac(t * 0.45f * s) * 1.6f
-                scale(tint(r * 200f), 0.06f + exp(-((dist - r).pow(2)) / 0.01f))
+                scale(tint(r * 200f), 0.15f + exp(-((dist - r).pow(2)) / 0.012f))
             }
             8 -> {
                 val h = hash(x, y)
@@ -84,8 +84,8 @@ object EffectRenderer {
             }
             13 -> scale(tint(x * 360f), 0.1f + 0.9f * (0.5f + 0.5f * sin((x * 1.6f - t * 0.45f * s) * 2f * PI.toFloat())))
             14 -> {
-                val p = 0.5f + 0.55f * sin(t * 0.9f * s)
-                scale(tint(t * 40f), 0.05f + exp(-((x - p).pow(2)) / 0.004f))
+                val p = 0.5f + 0.45f * sin(t * 0.9f * s)
+                scale(tint(t * 40f), 0.15f + exp(-((x - p).pow(2)) / 0.006f))
             }
             15 -> scale(hue(angle + t * 40f), 0.15f + 0.85f * (0.5f + 0.5f * cos(((angle / 360f) * 4f + t * 0.5f * s) * 2f * PI.toFloat())))
             16 -> hue(y * 220f - t * 110f * s + x * 20f)

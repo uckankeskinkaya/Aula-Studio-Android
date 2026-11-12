@@ -6,6 +6,11 @@
     <string name="nav_per_key">Tuş renkleri</string>
     <string name="nav_mapping">Tuş atama</string>
     <string name="nav_settings">Ayarlar</string>
+    <string name="navs_overview">Özet</string>
+    <string name="navs_lighting">Işık</string>
+    <string name="navs_per_key">Renkler</string>
+    <string name="navs_mapping">Atama</string>
+    <string name="navs_settings">Ayarlar</string>
     <string name="status_connected">Bağlı</string>
     <string name="status_disconnected">Bağlı değil</string>
     <string name="wired_usb">Kablolu USB</string>
