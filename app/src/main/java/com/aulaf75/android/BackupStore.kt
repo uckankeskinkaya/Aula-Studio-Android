@@ -13,36 +13,69 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-/** Klavyenin ham bölgelerini JSON (hex) olarak saklar. */
+/** Why a backup was taken; stored in the file name and localized by the UI. */
+enum class BackupReason(val slug: String) {
+    ORIGINAL("original"), CONNECT("connect"), BRIGHTNESS("brightness"), LIGHTING("lighting"),
+    SLEEP("sleep"), REMAP("remap"), PER_KEY("per-key"), RESTORE("restore"), UNKNOWN("unknown");
+
+    companion object {
+        fun fromSlug(s: String) = entries.firstOrNull { it.slug == s }
+            // file names written by v0.1.x
+            ?: when (s) {
+                "baglanti" -> CONNECT; "once-parlaklik" -> BRIGHTNESS; "once-isik" -> LIGHTING; "once-uyku" -> SLEEP
+                "once-tus-atama" -> REMAP; "once-tus-rgb" -> PER_KEY; "once-geri-yukleme" -> RESTORE
+                else -> UNKNOWN
+            }
+    }
+}
+
+data class BackupEntry(val file: File, val reason: BackupReason, val timeMillis: Long?) {
+    val isOriginal: Boolean get() = reason == BackupReason.ORIGINAL
+}
+
+/** Stores raw keyboard banks as hex JSON in app-private storage. The original snapshot is never deleted. */
 class BackupStore(context: Context) {
     private val dir = File(context.filesDir, "backups").apply { mkdirs() }
+    private val stampFormat get() = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US)
 
-    fun list(): List<File> = dir.listFiles { f -> f.extension == "json" }?.sortedByDescending { it.name } ?: emptyList()
+    private fun originalFile(): File = File(dir, "0000-ilk-yedek.json") // name kept for v0.1 compatibility
 
-    fun firstBackup(): File = File(dir, "0000-ilk-yedek.json")
+    fun list(): List<BackupEntry> = (dir.listFiles { f -> f.extension == "json" } ?: emptyArray())
+        .sortedByDescending { it.name }
+        .map { f ->
+            if (f.name == originalFile().name) BackupEntry(f, BackupReason.ORIGINAL, f.lastModified())
+            else {
+                val m = Regex("""(\d{8}-\d{6})-(.*)""").matchEntire(f.nameWithoutExtension)
+                BackupEntry(
+                    f,
+                    BackupReason.fromSlug(m?.groupValues?.get(2) ?: ""),
+                    m?.groupValues?.get(1)?.let { runCatching { stampFormat.parse(it)?.time }.getOrNull() },
+                )
+            }
+        }
 
-    fun saveFirstIfMissing(data: KeyboardData) {
-        if (!firstBackup().exists()) firstBackup().writeText(toJson(data, "İlk bağlantıdaki orijinal ayarlar"))
+    fun saveOriginalIfMissing(data: KeyboardData) {
+        if (!originalFile().exists()) originalFile().writeText(toJson(data, BackupReason.ORIGINAL))
     }
 
-    fun save(label: String, data: KeyboardData): File {
-        val stamp = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date())
-        val safe = label.lowercase(Locale.ROOT).replace(Regex("[^a-z0-9]+"), "-").trim('-')
-        val f = File(dir, "$stamp-$safe.json")
-        f.writeText(toJson(data, label))
-        // En fazla 40 otomatik yedek tut; ilk yedek asla silinmez.
-        list().filter { it.name != firstBackup().name }.drop(40).forEach { it.delete() }
+    fun save(reason: BackupReason, data: KeyboardData): File {
+        val f = File(dir, "${stampFormat.format(Date())}-${reason.slug}.json")
+        f.writeText(toJson(data, reason))
+        // Keep the 40 most recent automatic backups; the original is never pruned.
+        list().filter { !it.isOriginal }.drop(40).forEach { it.file.delete() }
         return f
     }
 
     fun load(file: File): KeyboardData = fromJson(file.readText())
 
-    fun delete(file: File) { if (file.name != firstBackup().name) file.delete() }
+    fun delete(file: File) { if (file.name != originalFile().name) file.delete() }
 
     companion object {
-        fun toJson(d: KeyboardData, label: String): String = JSONObject().apply {
-            put("format", "aula-f75-android-backup-1")
-            put("label", label)
+        const val FORMAT = "aula-f75-android-backup-1"
+
+        fun toJson(d: KeyboardData, reason: BackupReason): String = JSONObject().apply {
+            put("format", FORMAT)
+            put("label", reason.slug)
             put("created", System.currentTimeMillis())
             put("config", d.config.bytes.hexCompact())
             put("palette", d.palette.bytes.hexCompact())
@@ -53,15 +86,15 @@ class BackupStore(context: Context) {
 
         fun fromJson(text: String): KeyboardData {
             val o = JSONObject(text)
-            require(o.optString("format") == "aula-f75-android-backup-1") { "Bilinmeyen yedek biçimi" }
+            require(o.optString("format") == FORMAT) { "unknown backup format" }
+            val base = o.optString("keymapBase").takeIf { it.isNotEmpty() }?.let { Keymap.parse(it.unhex()) }
             return KeyboardData(
                 config = ConfigRegion.parse(o.getString("config").unhex()),
                 palette = ColorTable.parse(o.getString("palette").unhex()),
-                base = o.optString("keymapBase").takeIf { it.isNotEmpty() }?.let { Keymap.parse(it.unhex()) },
+                base = base,
                 fn = o.optString("keymapFn").takeIf { it.isNotEmpty() }?.let { Keymap.parse(it.unhex()) },
                 perKey = o.optString("perKey").takeIf { it.isNotEmpty() }?.let { PerKeyColors.parse(it.unhex()) },
-                ansiError = null,
-                readErrors = emptyList(),
+                layout = base?.detectLayout(),
             )
         }
     }

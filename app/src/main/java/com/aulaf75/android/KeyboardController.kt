@@ -3,41 +3,42 @@ package com.aulaf75.android
 import com.aulaf75.android.protocol.ColorTable
 import com.aulaf75.android.protocol.ConfigRegion
 import com.aulaf75.android.protocol.F75
+import com.aulaf75.android.protocol.F75Error
 import com.aulaf75.android.protocol.KeyAction
 import com.aulaf75.android.protocol.KeyboardLayout
 import com.aulaf75.android.protocol.Keymap
 import com.aulaf75.android.protocol.Layer
+import com.aulaf75.android.protocol.LightingSettings
 import com.aulaf75.android.protocol.PerKeyColors
 import com.aulaf75.android.protocol.ProtocolException
 import com.aulaf75.android.protocol.Rgb
-import com.aulaf75.android.protocol.hex
 
-/** Klavyeden okunan tam durum. */
+/** Everything read from the keyboard in one snapshot. */
 data class KeyboardData(
     val config: ConfigRegion,
     val palette: ColorTable,
     val base: Keymap?,
     val fn: Keymap?,
     val perKey: PerKeyColors?,
-    val ansiError: String?,
-    val readErrors: List<String>,
-    val layout: KeyboardLayout? = null,
+    val layout: KeyboardLayout?,
+    val readErrors: List<String> = emptyList(),
 ) {
+    /** Remapping and per-key RGB need a recognised layout (Fn record in slot 53 or 59). */
     val mappingAllowed: Boolean get() = layout != null && base != null
     fun keymap(layer: Layer) = if (layer == Layer.BASE) base else fn
 }
 
-/** Cihaz G/Ç arayüzü; testlerde sahte cihazla değiştirilebilir. */
+/** Raw report I/O; the USB connection in the app, a simulated keyboard in tests. */
 interface ReportIo {
     fun query(request: ByteArray): ByteArray
     fun write(report: ByteArray)
 }
 
 /**
- * Tüm yazma işlemleri aynı kalıbı izler (aula-studio işlem sözleşmesi):
- * 1) klavyeyi yeniden oku, ekrandaki durumla aynı değilse hiçbir şey yazma,
- * 2) yedek al, 3) yalnızca değişen bölgeleri resmi sırayla yaz,
- * 4) geri oku ve birebir doğrula. Otomatik tekrar/geri alma yapılmaz.
+ * Every write follows the upstream aula-studio transaction contract:
+ * 1. re-read the keyboard and refuse (writing nothing) if it differs from what the user reviewed,
+ * 2. save a backup, 3. write only the changed banks in the official order,
+ * 4. read everything back and require an exact match. No automatic retry or rollback.
  */
 class KeyboardController(private val io: ReportIo, private val backup: (String, KeyboardData) -> Unit) {
 
@@ -52,38 +53,40 @@ class KeyboardController(private val io: ReportIo, private val backup: (String, 
         val errors = mutableListOf<String>()
         val config = readConfig()
         val palette = readPalette()
-        val base = runCatching { readKeymap(Layer.BASE) }.onFailure { errors += "Ana katman: ${it.message}" }.getOrNull()
-        val fn = runCatching { readKeymap(Layer.FN) }.onFailure { errors += "Fn katmanı: ${it.message}" }.getOrNull()
-        val perKey = runCatching { readPerKey() }.onFailure { errors += "Tuş renkleri: ${it.message}" }.getOrNull()
-        val layout = base?.detectLayout()
-        val ansiError = if (base == null) "Ana tuş haritası okunamadı"
-        else if (layout == null) runCatching { base.requireLayout() }.exceptionOrNull()?.message
-        else null
-        return KeyboardData(config, palette, base, fn, perKey, ansiError, errors, layout)
+        val base = runCatching { readKeymap(Layer.BASE) }.onFailure { errors += "base keymap: ${it.message}" }.getOrNull()
+        val fn = runCatching { readKeymap(Layer.FN) }.onFailure { errors += "fn keymap: ${it.message}" }.getOrNull()
+        val perKey = runCatching { readPerKey() }.onFailure { errors += "per-key: ${it.message}" }.getOrNull()
+        return KeyboardData(config, palette, base, fn, perKey, base?.detectLayout(), errors)
     }
 
-    private fun stale(): Nothing =
-        throw ProtocolException("Klavyedeki ayarlar ekrandakiyle aynı değil. Hiçbir şey yazılmadı; 'Yeniden oku' ile tekrar dene.")
+    private fun stale(): Nothing = throw ProtocolException(F75Error.STALE_STATE)
 
-    /** Işık/uyku: palet (gerekirse) sonra ayar bölgesi. */
+    /** Wraps raw I/O failures during a write; the state may be partially changed and is reported as such. */
+    private inline fun writing(step: () -> Unit) {
+        try {
+            step()
+        } catch (e: ProtocolException) {
+            throw e
+        } catch (e: Exception) {
+            throw ProtocolException(F75Error.WRITE_INTERRUPTED, e.message)
+        }
+    }
+
+    /** Lighting and sleep: palette first (if changed), then the configuration bank. */
     fun applyConfig(current: KeyboardData, newConfig: ConfigRegion, newPalette: ColorTable, label: String): KeyboardData {
         val c = readConfig()
         val p = readPalette()
         if (c != current.config || p != current.palette) stale()
         val paletteChanged = newPalette != p
         if (!paletteChanged && newConfig == c) return current
-        ConfigRegion.parse(newConfig.bytes) // imza kontrolü
         backup(label, current)
-        var done = 0
-        try {
-            if (paletteChanged) { io.write(F75.paletteWriteReport(newPalette)); done++ }
-            io.write(F75.configWriteReport(newConfig)); done++
-        } catch (e: Exception) {
-            throw ProtocolException("Yazma $done adımdan sonra kesildi: ${e.message}. Yedek alındı; yeniden oku ve gerekirse yedekten geri yükle.")
+        writing {
+            if (paletteChanged) io.write(F75.paletteWriteReport(newPalette))
+            // The official application commits 0x04 after 0x0a even when the config is unchanged.
+            io.write(F75.configWriteReport(newConfig))
         }
         val after = readAll()
-        if (after.config != newConfig || after.palette != newPalette)
-            throw ProtocolException("Geri okuma beklenenle eşleşmedi. Yedek duruyor; 'Yedekler' sekmesinden geri yükleyebilirsin.")
+        if (after.config != newConfig || after.palette != newPalette) throw ProtocolException(F75Error.READBACK_MISMATCH)
         return after
     }
 
@@ -94,95 +97,82 @@ class KeyboardController(private val io: ReportIo, private val backup: (String, 
         val cur = if (layer == Layer.BASE) base else readKeymap(Layer.FN)
         if (cur != current.keymap(layer)) stale()
         for ((index, action) in changes) {
-            if (index !in layout.sourceIndices) throw ProtocolException("Bu tuş değiştirilemez")
+            if (index !in layout.sourceIndices) throw ProtocolException(F75Error.PROTECTED_KEY, "$index")
             action.validate()
         }
         val next = cur.with(changes.filter { (i, a) -> !cur.matches(i, a) })
         if (next == cur) return current
         backup(label, current)
-        try {
-            io.write(next.bytes)
-        } catch (e: Exception) {
-            throw ProtocolException("Tuş haritası yazımı kesildi: ${e.message}. Yedek alındı.")
-        }
+        writing { io.write(next.bytes) }
         val after = readAll()
-        if (after.keymap(layer) != next) throw ProtocolException("Geri okuma eşleşmedi. Yedekten geri yükleyebilirsin.")
+        if (after.keymap(layer) != next) throw ProtocolException(F75Error.READBACK_MISMATCH)
         return after
     }
 
-    /** Tuş başına RGB: önce 06 bankası, sonra ayarlar özel moda (21) alınır. */
+    /** Per-key RGB: the 0x06 bank first, then the configuration switches to custom mode (21). */
     fun applyPerKey(current: KeyboardData, changes: Map<Int, Rgb>, label: String): KeyboardData {
         if (readKeymap(Layer.BASE).requireLayout() != current.layout) stale()
         val cur = readPerKey()
         val c = readConfig()
         if (cur != current.perKey || c != current.config) stale()
         val next = cur.with(changes)
-        val newConfig = c.withLighting(com.aulaf75.android.protocol.LightingSettings(21, 0, 0, false))
+        val newConfig = c.withLighting(LightingSettings(F75.CUSTOM_EFFECT, 0, 0, false))
         backup(label, current)
-        var done = 0
-        try {
-            io.write(F75.perKeyWriteReport(next)); done++
-            io.write(F75.configWriteReport(newConfig)); done++
-        } catch (e: Exception) {
-            throw ProtocolException("Yazma $done adımdan sonra kesildi: ${e.message}. Yedek alındı.")
+        writing {
+            io.write(F75.perKeyWriteReport(next))
+            io.write(F75.configWriteReport(newConfig))
         }
         val after = readAll()
-        if (after.perKey != next || after.config != newConfig)
-            throw ProtocolException("Geri okuma eşleşmedi. Yedekten geri yükleyebilirsin.")
+        if (after.perKey != next || after.config != newConfig) throw ProtocolException(F75Error.READBACK_MISMATCH)
         return after
     }
 
-    /** Yedekten geri yükleme. Her parça ayrı doğrulanır; F1–F12/Fn kayıtları kopyalanmaz. */
-    fun restore(current: KeyboardData, saved: KeyboardData): Pair<KeyboardData, List<String>> {
-        val notes = mutableListOf<String>()
+    /**
+     * Restores a backup. Keymaps copy only remappable source slots (never F1–F12/Fn) and refuse
+     * backups whose protected records differ or that would disable a key. Each bank is verified.
+     */
+    fun restore(current: KeyboardData, saved: KeyboardData): Pair<KeyboardData, Int> {
         saved.palette.validateForWrite()
         var state = current
+        var restoredParts = 0
         val sources = (current.layout ?: KeyboardLayout.ANSI).sourceIndices
-        // Önce tuş haritaları ve tuş renkleri (ayar yazımı en sonda tüm modu geri getirir).
-        for (layer in Layer.values()) {
+        for (layer in Layer.entries) {
             val s = saved.keymap(layer) ?: continue
             val cur = state.keymap(layer) ?: continue
-            for (p in F75.PROTECTED_MATRIX) if (!cur.raw(p).contentEquals(s.raw(p)))
-                throw ProtocolException("Yedekteki korumalı tuş kayıtları farklı; bu yedek başka bir revizyona ait olabilir. Geri yükleme yapılmadı.")
+            for (p in F75.PROTECTED_MATRIX) if (!cur.raw(p).contentEquals(s.raw(p))) throw ProtocolException(F75Error.BACKUP_PROTECTED_DIFFERS)
             val changes = mutableMapOf<Int, ByteArray>()
             for (i in sources) {
                 val rec = s.raw(i)
-                if (layer == Layer.BASE && rec.all { it.toInt() == 0 })
-                    throw ProtocolException("Yedek bir tuşu devre dışı bırakırdı; geri yükleme yapılmadı.")
+                if (layer == Layer.BASE && rec.all { it.toInt() == 0 }) throw ProtocolException(F75Error.BACKUP_DISABLES_KEY, "$i")
                 if (!cur.raw(i).contentEquals(rec)) changes[i] = rec
             }
             if (changes.isEmpty()) continue
-            if (!state.mappingAllowed) throw ProtocolException(state.ansiError ?: "Tuş haritası yazımı kapalı")
+            if (!state.mappingAllowed) throw ProtocolException(F75Error.MAPPING_UNAVAILABLE)
             val n = cur.bytes.copyOf()
             for ((i, rec) in changes) rec.copyInto(n, 8 + 4 * i)
             val next = Keymap.parse(n)
             if (readKeymap(layer) != cur) stale()
-            io.write(next.bytes)
-            if (readKeymap(layer) != next) throw ProtocolException("${layer.name} katmanı geri okuması eşleşmedi")
-            notes += "${if (layer == Layer.BASE) "Ana" else "Fn"} katman: ${changes.size} tuş geri yüklendi"
+            writing { io.write(next.bytes) }
+            if (readKeymap(layer) != next) throw ProtocolException(F75Error.READBACK_MISMATCH, layer.name)
+            restoredParts++
             state = state.copy(base = if (layer == Layer.BASE) next else state.base, fn = if (layer == Layer.FN) next else state.fn)
         }
         val sp = saved.perKey
         if (sp != null && state.perKey != null && sp != state.perKey) {
             if (readPerKey() != state.perKey) stale()
-            io.write(F75.perKeyWriteReport(sp))
-            if (readPerKey() != sp) throw ProtocolException("Tuş renkleri geri okuması eşleşmedi")
-            notes += "Tuş renkleri geri yüklendi"
+            writing { io.write(F75.perKeyWriteReport(sp)) }
+            if (readPerKey() != sp) throw ProtocolException(F75Error.READBACK_MISMATCH, "per-key")
+            restoredParts++
         }
         val c = readConfig()
         val p = readPalette()
         if (c != state.config || p != state.palette) stale()
-        if (saved.palette != p) io.write(F75.paletteWriteReport(saved.palette))
-        // Resmi uygulama gibi palet/tuş rengi değişiminden sonra ayar da yazılır.
-        io.write(F75.configWriteReport(saved.config))
+        writing {
+            if (saved.palette != p) io.write(F75.paletteWriteReport(saved.palette))
+            io.write(F75.configWriteReport(saved.config))
+        }
         val after = readAll()
-        if (after.config != saved.config || after.palette != saved.palette)
-            throw ProtocolException("Işık ayarlarının geri okuması eşleşmedi")
-        notes += "Işık, renk ve uyku ayarları geri yüklendi"
-        return after to notes
-    }
-
-    companion object {
-        fun identityText(id: ByteArray) = id.hex()
+        if (after.config != saved.config || after.palette != saved.palette) throw ProtocolException(F75Error.READBACK_MISMATCH, "lighting")
+        return after to restoredParts + 1
     }
 }

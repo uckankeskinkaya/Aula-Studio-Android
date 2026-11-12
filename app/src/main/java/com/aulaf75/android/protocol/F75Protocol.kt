@@ -1,19 +1,43 @@
 package com.aulaf75.android.protocol
 
 /*
- * AULA F75 (kablolu, 258a:010c, arayüz 1) HID feature-report protokolü.
+ * AULA F75 wired configuration protocol (USB 258a:010c, interface 1,
+ * HID feature report 0x06, 520 bytes).
  *
- * Bu dosya Dahuum/aula-studio (MIT) projesindeki `crates/aula-protocol`
- * Rust kodunun birebir Kotlin portudur. Ofsetler, imzalar ve korumalar
- * oradaki kanıtlara dayanır. Bu dosya Android'e bağımlı değildir; yalnızca
- * baytları kodlar/çözer, cihaza hiçbir şey göndermez.
+ * This is a faithful Kotlin port of `crates/aula-protocol` from
+ * Dahuum/aula-studio (MIT). Offsets, signatures and safety rules follow the
+ * evidence documented there (docs/PROTOCOL.md). This file is pure Kotlin: it
+ * only encodes and decodes bytes and never talks to a device.
  */
 
-class ProtocolException(message: String) : Exception(message)
+/** Every failure the app can report. The UI maps each code to a localized message. */
+enum class F75Error(val transport: Boolean = false) {
+    // Malformed or unexpected device data
+    BAD_LENGTH, BAD_HEADER, BAD_CONFIG_SIGNATURE, BAD_PALETTE_SIGNATURE, BAD_KEYMAP_SIGNATURE,
+    UNKNOWN_EFFECT,
+
+    // Rejected requests (nothing is written)
+    VALUE_OUT_OF_RANGE, UNSUPPORTED_SLEEP, EFFECT_HAS_NO_COLOR, MODE_HAS_NO_BRIGHTNESS,
+    INDEX_OUT_OF_RANGE, PROTECTED_KEY, UNSUPPORTED_ACTION, LAYOUT_UNKNOWN, MAPPING_UNAVAILABLE,
+
+    // Transaction safety
+    STALE_STATE, WRITE_INTERRUPTED, READBACK_MISMATCH, BACKUP_PROTECTED_DIFFERS, BACKUP_DISABLES_KEY,
+    BACKUP_INVALID,
+
+    // USB / connection
+    DEVICE_NOT_FOUND, NO_USB_DEVICES, PERMISSION_DENIED, NOT_CONNECTED, IDENTITY_MISMATCH,
+    INTERFACE_MISSING(transport = true), OPEN_FAILED(transport = true), CLAIM_FAILED(transport = true),
+    TRANSFER_FAILED(transport = true),
+}
+
+/** Thrown for every protocol, transaction and transport failure. [detail] is technical context (not localized). */
+class ProtocolException(val error: F75Error, val detail: String? = null) :
+    Exception(error.name + (detail?.let { ": $it" } ?: ""))
 
 object F75 {
     const val VENDOR_ID = 0x258a
     const val PRODUCT_ID = 0x010c
+    const val RECEIVER_VENDOR_ID = 0x3554
     const val CONFIG_INTERFACE = 1
 
     const val REPORT_ID = 0x06
@@ -22,55 +46,41 @@ object F75 {
     const val CONFIG_SIZE = 128
     const val COLORS_SIZE = 512
     const val PER_KEY_SIZE = 378
+
+    /** Matrix slot of Fn on ANSI boards (slot 59 is Right Ctrl there). */
     const val FN_MATRIX_INDEX = 53
 
-    /** Yalnızca bu kimliğe sahip orijinal ANSI F75 yapılandırılır. */
+    /** Matrix slot of Fn on ISO boards (slot 53 is AltGr there). */
+    const val ISO_FN_MATRIX_INDEX = 59
+
+    /** Six-byte model identity of the original F75; configuration is refused for anything else. */
     val F75_IDENTITY = byteArrayOf(3, 0, 0, 0, 0, 0xcd.toByte())
 
     val SLEEP_SECONDS = listOf(0, 60, 90, 120, 180, 240, 300, 600, 900, 1200)
 
-    /** ISO düzende Fn tuşunun matris konumu (ANSI'de bu konum sağ Ctrl'dir). */
-    const val ISO_FN_MATRIX_INDEX = 59
+    /** Hardware preset effects (0 = off). 21 is the per-key "custom" mode. */
+    val EFFECTS = 0..18
+    const val CUSTOM_EFFECT = 21
 
-    /** F1..F12 ve iki olası Fn konumu (53 ve 59): firmware kontrol tuşları, kaynak olarak değiştirilemez.
-     *  Güvenlik için 53 ve 59 her iki düzende de korunur (ANSI sağ Ctrl / ISO AltGr de bu yüzden değiştirilemez). */
+    /**
+     * Firmware control sources that are never remapped: F1–F12 plus both possible
+     * Fn slots (53, 59). Protecting both on every layout keeps Fn combinations,
+     * including the factory reset, reachable whatever the board revision.
+     */
     val PROTECTED_MATRIX = setOf(12, 18, 24, 30, 36, 42, 48, 54, 60, 66, 72, 78, FN_MATRIX_INDEX, ISO_FN_MATRIX_INDEX)
-
-    val EFFECT_NAMES = linkedMapOf(
-        0 to "Kapalı",
-        1 to "Sabit",
-        2 to "Nefes",
-        3 to "Gökkuşağı",
-        4 to "Flash away",
-        5 to "Yağmur damlası",
-        6 to "Gökkuşağı çarkı",
-        7 to "Dalgalanma",
-        8 to "Yıldızlar",
-        9 to "Gölge",
-        10 to "Retro yılan",
-        11 to "Neon akış",
-        12 to "Tepki (basınca)",
-        13 to "Sinüs dalgası",
-        14 to "Tarama",
-        15 to "Yel değirmeni",
-        16 to "Renkli şelale",
-        17 to "Çiçeklenme",
-        18 to "Fırtına",
-    )
 
     fun effectSupportsColor(effect: Int): Boolean = effect in setOf(1, 2) || effect in 4..14 || effect == 18
     fun effectSupportsSpeed(effect: Int): Boolean = effect in 2..18
 
     // ---------------------------------------------------------------- framing
 
+    /** [id, command, target, reserved, total chunks, chunk index, length LE16] + zero padding. */
     private fun header(command: Int, target: Int, length: Int): ByteArray {
         val b = ByteArray(REPORT_SIZE)
         b[0] = REPORT_ID.toByte()
         b[1] = command.toByte()
         b[2] = target.toByte()
-        b[3] = 0
-        b[4] = 1 // toplam parça
-        b[5] = 0 // parça indeksi
+        b[4] = 1
         b[6] = (length and 0xff).toByte()
         b[7] = (length shr 8 and 0xff).toByte()
         return b
@@ -94,21 +104,21 @@ object F75 {
         header(0x06, 0, PER_KEY_SIZE).also { colors.bytes.copyInto(it, HEADER_SIZE) }
 
     fun decodeIdentity(reply: ByteArray): ByteArray {
-        if (reply.size != REPORT_SIZE && reply.size != 14) throw ProtocolException("Kimlik yanıtı uzunluğu hatalı: ${reply.size}")
+        if (reply.size != REPORT_SIZE && reply.size != 14) throw ProtocolException(F75Error.BAD_LENGTH, "identity ${reply.size}")
         val req = identityRequest()
-        for (i in 0 until 8) if (reply[i] != req[i]) throw ProtocolException("Kimlik yanıt başlığı hatalı: ${reply.copyOf(8).hex()}")
+        for (i in 0 until 8) if (reply[i] != req[i]) throw ProtocolException(F75Error.BAD_HEADER, reply.copyOf(8).hex())
         return reply.copyOfRange(8, 14)
     }
 
-    /** 0x84 / 0x8a yanıtını doğrular, yükü döndürür. */
+    /** Validates a region reply (firmware may echo the read or the write command) and returns its payload. */
     private fun decodeRegion(reply: ByteArray, readCmd: Int, writeCmd: Int, size: Int): ByteArray {
         if (reply.size != REPORT_SIZE && reply.size != HEADER_SIZE + size)
-            throw ProtocolException("Yanıt uzunluğu ${reply.size}, beklenen ${HEADER_SIZE + size}")
+            throw ProtocolException(F75Error.BAD_LENGTH, "got ${reply.size}, expected ${HEADER_SIZE + size}")
         val expected = header(readCmd, 0, size)
-        val cmd = reply[1].toInt() and 0xff
+        val cmd = reply[1].u()
         if (reply[0].toInt() != REPORT_ID || (cmd != readCmd && cmd != writeCmd) ||
             (2 until 8).any { reply[it] != expected[it] }
-        ) throw ProtocolException("Yanıt başlığı hatalı: ${reply.copyOf(8).hex()}")
+        ) throw ProtocolException(F75Error.BAD_HEADER, reply.copyOf(8).hex())
         return reply.copyOfRange(HEADER_SIZE, HEADER_SIZE + size)
     }
 
@@ -116,24 +126,25 @@ object F75 {
     fun decodePalette(reply: ByteArray) = ColorTable.parse(decodeRegion(reply, 0x8a, 0x0a, COLORS_SIZE))
     fun decodePerKey(reply: ByteArray) = PerKeyColors.parse(decodeRegion(reply, 0x86, 0x06, PER_KEY_SIZE))
 
+    /** Keymap replies must be full 520-byte reports; the command byte is normalized to write form 0x03. */
     fun decodeKeymap(layer: Layer, reply: ByteArray): Keymap {
-        if (reply.size != REPORT_SIZE) throw ProtocolException("Tuş haritası yanıtı 520 bayt olmalı, gelen ${reply.size}")
+        if (reply.size != REPORT_SIZE) throw ProtocolException(F75Error.BAD_LENGTH, "keymap ${reply.size}")
         val req = keymapReadRequest(layer)
-        val cmd = reply[1].toInt() and 0xff
+        val cmd = reply[1].u()
         if (reply[0].toInt() != REPORT_ID || (cmd != 0x83 && cmd != 0x03) || (2 until 8).any { reply[it] != req[it] })
-            throw ProtocolException("Tuş haritası başlığı hatalı: ${reply.copyOf(8).hex()}")
+            throw ProtocolException(F75Error.BAD_HEADER, reply.copyOf(8).hex())
         val normalized = reply.copyOf()
         normalized[1] = 0x03
         return Keymap.parse(normalized)
     }
 
-    // --------------------------------------------------------- ANSI matrisi
+    // ------------------------------------------------------------ ANSI matrix
 
     private val LETTERS = intArrayOf(
         9, 34, 22, 21, 20, 27, 33, 39, 50, 45, 51, 57, 46, 40, 56, 62, 8, 26, 15, 32, 44, 28, 14, 16, 38, 10,
     )
 
-    /** Fiziksel tuşun (HID kullanım kodu) matris indeksini verir; F75'te yoksa null. */
+    /** Matrix slot of the physical key that sends [usage] on the original ANSI F75, or null. */
     fun matrixIndexForUsage(usage: Int): Int? = when (usage) {
         in 4..29 -> LETTERS[usage - 4]
         in 30..38 -> 7 + 6 * (usage - 30)
@@ -180,17 +191,18 @@ enum class Layer(val byte: Int) { BASE(0), FN(1) }
 
 data class LightingSettings(val effect: Int, val brightness: Int, val speed: Int, val colorful: Boolean) {
     fun validate() {
-        if (effect > 18 && effect != 21) throw ProtocolException("Bilinmeyen efekt $effect")
-        if (brightness !in 0..9) throw ProtocolException("Parlaklık 0..9 olmalı")
-        if (speed !in 0..4) throw ProtocolException("Hız 0..4 olmalı")
+        if (effect !in F75.EFFECTS && effect != F75.CUSTOM_EFFECT) throw ProtocolException(F75Error.UNKNOWN_EFFECT, "$effect")
+        if (brightness !in 0..9) throw ProtocolException(F75Error.VALUE_OUT_OF_RANGE, "brightness $brightness")
+        if (speed !in 0..4) throw ProtocolException(F75Error.VALUE_OUT_OF_RANGE, "speed $speed")
     }
 }
 
+/** The 128-byte configuration bank (command 0x04 / 0x84), signed 5A A5 at 126/127. */
 class ConfigRegion private constructor(val bytes: ByteArray) {
     companion object {
         fun parse(data: ByteArray): ConfigRegion {
-            if (data.size != F75.CONFIG_SIZE) throw ProtocolException("Ayar bölgesi 128 bayt olmalı")
-            if (data[126] != 0x5a.toByte() || data[127] != 0xa5.toByte()) throw ProtocolException("Ayar imzası 5A A5 yok")
+            if (data.size != F75.CONFIG_SIZE) throw ProtocolException(F75Error.BAD_LENGTH, "config ${data.size}")
+            if (data[126] != 0x5a.toByte() || data[127] != 0xa5.toByte()) throw ProtocolException(F75Error.BAD_CONFIG_SIGNATURE)
             return ConfigRegion(data.copyOf())
         }
     }
@@ -199,21 +211,21 @@ class ConfigRegion private constructor(val bytes: ByteArray) {
 
     fun lighting(): LightingSettings {
         val effect = effectId
-        if (effect > 18 && effect != 21) throw ProtocolException("Klavyede bilinmeyen efekt kimliği: $effect")
-        if (effect == 0 || effect == 21) return LightingSettings(effect, 0, 0, false)
+        if (effect !in F75.EFFECTS && effect != F75.CUSTOM_EFFECT) throw ProtocolException(F75Error.UNKNOWN_EFFECT, "$effect")
+        if (effect == 0 || effect == F75.CUSTOM_EFFECT) return LightingSettings(effect, 0, 0, false)
         val o = 56 + effect * 2
         return LightingSettings(effect, bytes[o].u(), bytes[o + 1].u() shr 4, bytes[o + 1].u() and 0x0f == 7)
             .also { it.validate() }
     }
 
-    /** Yalnızca 9, 10, 11 ve efektin iki parametre baytını değiştirir. */
+    /** Changes only bytes 9, 10, 11 and the selected effect's two parameter bytes. */
     fun withLighting(s: LightingSettings): ConfigRegion {
         s.validate()
         val n = bytes.copyOf()
-        n[9] = if (s.effect == 21) 1 else 0
+        n[9] = if (s.effect == F75.CUSTOM_EFFECT) 1 else 0
         n[10] = s.effect.toByte()
-        if (s.effect == 21) {
-            n[11] = 0x20
+        if (s.effect == F75.CUSTOM_EFFECT) {
+            n[11] = 0x20 // StartGp + group 0
         } else if (s.effect != 0) {
             val o = 56 + s.effect * 2
             n[o] = s.brightness.toByte()
@@ -224,16 +236,16 @@ class ConfigRegion private constructor(val bytes: ByteArray) {
         return ConfigRegion(n)
     }
 
-    /** Yalnızca seçili hazır efektin parlaklık baytını değiştirir (orijinal projede donanımda test edilmiş tek yazma). */
+    /** Changes only the active preset's brightness byte (the write validated on hardware upstream). */
     fun withPresetBrightness(value: Int): ConfigRegion {
-        if (value !in 0..9) throw ProtocolException("Parlaklık 0..9 olmalı")
+        if (value !in 0..9) throw ProtocolException(F75Error.VALUE_OUT_OF_RANGE, "brightness $value")
         val effect = effectId
-        if (effect !in 1..18) throw ProtocolException("Seçili modda (kapalı/özel) parlaklık alanı yok")
+        if (effect !in 1..18) throw ProtocolException(F75Error.MODE_HAS_NO_BRIGHTNESS)
         lighting()
         return ConfigRegion(bytes.copyOf().also { it[56 + effect * 2] = value.toByte() })
     }
 
-    /** Bir efektin klavyede kayıtlı parametreleri (efekt seçilmemiş olsa da). */
+    /** Parameters stored on the keyboard for [effect], even when it is not the active effect. */
     fun storedSettings(effect: Int): LightingSettings {
         if (effect !in 1..18) return LightingSettings(effect, 0, 0, false)
         val o = 56 + effect * 2
@@ -245,10 +257,11 @@ class ConfigRegion private constructor(val bytes: ByteArray) {
         )
     }
 
+    /** Sleep timeout in seconds (byte 24, 30-second units), or null if the stored value is unknown. */
     fun sleepSeconds(): Int? = (bytes[24].u() * 30).takeIf { it in F75.SLEEP_SECONDS }
 
     fun withSleepSeconds(seconds: Int): ConfigRegion {
-        if (seconds !in F75.SLEEP_SECONDS) throw ProtocolException("Desteklenmeyen uyku süresi")
+        if (seconds !in F75.SLEEP_SECONDS) throw ProtocolException(F75Error.UNSUPPORTED_SLEEP, "$seconds")
         return ConfigRegion(bytes.copyOf().also { it[24] = (seconds / 30).toByte() })
     }
 
@@ -258,28 +271,29 @@ class ConfigRegion private constructor(val bytes: ByteArray) {
 
 // ------------------------------------------------------------------ palette
 
+/** The 512-byte effect palette (0x0a / 0x8a): seven RGB triples per effect at 21 × id, signed at 506/507. */
 class ColorTable private constructor(val bytes: ByteArray) {
     companion object {
         fun parse(data: ByteArray): ColorTable {
-            if (data.size != F75.COLORS_SIZE) throw ProtocolException("Palet 512 bayt olmalı")
+            if (data.size != F75.COLORS_SIZE) throw ProtocolException(F75Error.BAD_LENGTH, "palette ${data.size}")
             return ColorTable(data.copyOf())
         }
     }
 
     fun validateForWrite() {
-        if (bytes[506] != 0x5a.toByte() || bytes[507] != 0xa5.toByte())
-            throw ProtocolException("Palet imzası (506/507 = 5A A5) yok; yazma engellendi")
+        if (bytes[506] != 0x5a.toByte() || bytes[507] != 0xa5.toByte()) throw ProtocolException(F75Error.BAD_PALETTE_SIGNATURE)
     }
 
     fun effectColor(effect: Int): Rgb {
-        if (effect !in 1..18) throw ProtocolException("Bu efektin palet kaydı yok")
+        if (effect !in 1..18) throw ProtocolException(F75Error.EFFECT_HAS_NO_COLOR, "$effect")
         val o = effect * 21
         return Rgb(bytes[o].u(), bytes[o + 1].u(), bytes[o + 2].u())
     }
 
+    /** Changes only the first RGB triple of [effect]; every other byte is preserved. */
     fun withEffectColor(effect: Int, c: Rgb): ColorTable {
         validateForWrite()
-        if (!F75.effectSupportsColor(effect)) throw ProtocolException("Bu efektin rengi ayarlanamaz")
+        if (!F75.effectSupportsColor(effect)) throw ProtocolException(F75Error.EFFECT_HAS_NO_COLOR, "$effect")
         val o = effect * 21
         val n = bytes.copyOf()
         n[o] = c.r.toByte(); n[o + 1] = c.g.toByte(); n[o + 2] = c.b.toByte()
@@ -292,6 +306,8 @@ class ColorTable private constructor(val bytes: ByteArray) {
 
 data class Rgb(val r: Int, val g: Int, val b: Int) {
     fun toHex() = "#%02X%02X%02X".format(r, g, b)
+    val isDark: Boolean get() = maxOf(r, g, b) < 24
+
     companion object {
         fun fromHex(s: String): Rgb? {
             val h = s.trim().removePrefix("#")
@@ -304,10 +320,11 @@ data class Rgb(val r: Int, val g: Int, val b: Int) {
 
 // ------------------------------------------------------------- per-key RGB
 
+/** Per-key colors (0x06 / 0x86): three planar 126-byte planes R, G, B indexed by matrix slot. */
 class PerKeyColors private constructor(val bytes: ByteArray) {
     companion object {
         fun parse(data: ByteArray): PerKeyColors {
-            if (data.size != F75.PER_KEY_SIZE) throw ProtocolException("Tuş renkleri 378 bayt olmalı")
+            if (data.size != F75.PER_KEY_SIZE) throw ProtocolException(F75Error.BAD_LENGTH, "per-key ${data.size}")
             return PerKeyColors(data.copyOf())
         }
     }
@@ -320,7 +337,7 @@ class PerKeyColors private constructor(val bytes: ByteArray) {
     fun with(changes: Map<Int, Rgb>): PerKeyColors {
         val n = bytes.copyOf()
         for ((index, c) in changes) {
-            if (index !in 0 until 126) throw ProtocolException("LED indeksi sınır dışında")
+            if (index !in 0 until 126) throw ProtocolException(F75Error.INDEX_OUT_OF_RANGE, "$index")
             n[index] = c.r.toByte(); n[126 + index] = c.g.toByte(); n[252 + index] = c.b.toByte()
         }
         return PerKeyColors(n)
@@ -332,18 +349,19 @@ class PerKeyColors private constructor(val bytes: ByteArray) {
 
 // ------------------------------------------------------------------- keymap
 
-/** page: 0 klavye, 1 fare, 2 medya (cihaz kayıt tipi, USB sayfası değil). */
+/** A key assignment. [page] is the device record type (0 keyboard, 1 mouse, 2 consumer), not a USB usage page. */
 data class KeyAction(val page: Int, val usage: Int) {
     fun validate() {
         val ok = when (page) {
             0 -> usage in 4..0xa4 || usage in 0xe0..0xe7
             1 -> usage in 1..5
-            2 -> usage in KeyNames.MEDIA.keys
+            2 -> usage in KeyNames.MEDIA_USAGES
             else -> false
         }
-        if (!ok) throw ProtocolException("Desteklenmeyen tuş eylemi ($page, $usage); tuş devre dışı bırakılamaz")
+        if (!ok) throw ProtocolException(F75Error.UNSUPPORTED_ACTION, "$page/$usage")
     }
 
+    /** Four-byte record exactly as the official converter emits it. */
     fun record(): ByteArray {
         validate()
         return when {
@@ -354,14 +372,15 @@ data class KeyAction(val page: Int, val usage: Int) {
     }
 }
 
+/** A complete 520-byte keymap report (0x03 / 0x83): 128 four-byte slots, signed 5A A5 at 518/519. */
 class Keymap private constructor(val bytes: ByteArray) {
     companion object {
         fun parse(data: ByteArray): Keymap {
-            if (data.size != F75.REPORT_SIZE) throw ProtocolException("Tuş haritası 520 bayt olmalı")
+            if (data.size != F75.REPORT_SIZE) throw ProtocolException(F75Error.BAD_LENGTH, "keymap ${data.size}")
             val ok = data[0].u() == 6 && data[1].u() == 3 && data[2].u() <= 1 &&
                 data[3].u() == 0 && data[4].u() == 1 && data[5].u() == 0 && data[6].u() == 0 && data[7].u() == 2
-            if (!ok) throw ProtocolException("Tuş haritası başlığı hatalı")
-            if (data[518] != 0x5a.toByte() || data[519] != 0xa5.toByte()) throw ProtocolException("Tuş haritası imzası yok")
+            if (!ok) throw ProtocolException(F75Error.BAD_HEADER, data.copyOf(8).hex())
+            if (data[518] != 0x5a.toByte() || data[519] != 0xa5.toByte()) throw ProtocolException(F75Error.BAD_KEYMAP_SIGNATURE)
             return Keymap(data.copyOf())
         }
     }
@@ -369,26 +388,27 @@ class Keymap private constructor(val bytes: ByteArray) {
     val layer: Layer get() = if (bytes[2].u() == 0) Layer.BASE else Layer.FN
 
     fun raw(index: Int): ByteArray {
-        if (index !in 0..126) throw ProtocolException("Matris indeksi sınır dışında")
+        if (index !in 0..126) throw ProtocolException(F75Error.INDEX_OUT_OF_RANGE, "$index")
         val o = 8 + 4 * index
         return bytes.copyOfRange(o, o + 4)
     }
 
     fun matches(index: Int, action: KeyAction) = raw(index).contentEquals(action.record())
 
+    /** Patches only the given slots. Slot 127 overlaps the signature and protected slots are refused. */
     fun with(changes: Map<Int, KeyAction>): Keymap {
         val n = bytes.copyOf()
         for ((index, action) in changes) {
-            if (index !in 0..126) throw ProtocolException("Matris indeksi sınır dışında")
-            if (index in F75.PROTECTED_MATRIX) throw ProtocolException("F1–F12 ve Fn tuşları korunur, değiştirilemez")
+            if (index !in 0..126) throw ProtocolException(F75Error.INDEX_OUT_OF_RANGE, "$index")
+            if (index in F75.PROTECTED_MATRIX) throw ProtocolException(F75Error.PROTECTED_KEY, "$index")
             action.record().copyInto(n, 8 + 4 * index)
         }
         return Keymap(n)
     }
 
     /**
-     * Fn kaydının (0D 00 00 00) konumundan fiziksel düzeni belirler:
-     * 53 => ANSI, 59 => ISO (aula-studio FR/ISO paket kanıtı). Belirsizse null.
+     * Physical layout from the position of the Fn record (0D 00 00 00):
+     * slot 53 => ANSI, slot 59 => ISO (upstream FR/ISO package evidence). Null when ambiguous.
      */
     fun detectLayout(): KeyboardLayout? {
         if (layer != Layer.BASE) return null
@@ -402,9 +422,7 @@ class Keymap private constructor(val bytes: ByteArray) {
         }
     }
 
-    fun requireLayout(): KeyboardLayout = detectLayout() ?: throw ProtocolException(
-        "Fn tuşunun konumu tanınmadı (bilinmeyen revizyon). Güvenlik için tuş atama ve tuş RGB yazma kapalı."
-    )
+    fun requireLayout(): KeyboardLayout = detectLayout() ?: throw ProtocolException(F75Error.LAYOUT_UNKNOWN)
 
     override fun equals(other: Any?) = other is Keymap && other.bytes.contentEquals(bytes)
     override fun hashCode() = bytes.contentHashCode()

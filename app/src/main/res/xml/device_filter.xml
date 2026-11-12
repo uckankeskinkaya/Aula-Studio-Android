@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- AULA F75 kablolu: VID 0x258a = 9610, PID 0x010c = 268 -->
+    <!-- AULA wired keyboards: VID 0x258a = 9610 (F75 is PID 0x010c = 268). -->
     <usb-device vendor-id="9610" />
 </resources>

@@ -6,17 +6,18 @@ import android.hardware.usb.UsbInterface
 import android.hardware.usb.UsbManager
 import com.aulaf75.android.ReportIo
 import com.aulaf75.android.protocol.F75
+import com.aulaf75.android.protocol.F75Error
+import com.aulaf75.android.protocol.ProtocolException
 import java.io.Closeable
-import java.io.IOException
 
 /**
- * Kablolu F75'in yapılandırma arayüzüne (arayüz 1) HID feature report
- * gönderir/alır. Masaüstündeki hidapi send/get_feature_report çağrılarının
- * USB kontrol aktarımı karşılığıdır (SET_REPORT / GET_REPORT, Feature tipi).
+ * Android transport: HID feature reports on the keyboard's configuration interface (1) via USB
+ * control transfers (SET_REPORT / GET_REPORT, report type Feature). This is the Android equivalent
+ * of hidapi's send_feature_report / get_feature_report used by the desktop app.
  */
 object F75Usb {
-    /** Önce bilinen kablolu F75 (258a:010c), yoksa aynı üreticinin başka bir PID'i denenir.
-     *  Asıl doğrulama bağlantıdan sonra model kimliği okumasıyla yapılır. */
+    /** The known wired F75 first; otherwise another device from the same vendor exposing interface 1.
+     *  The six-byte model identity read after opening is what actually authorises configuration. */
     fun find(manager: UsbManager): UsbDevice? {
         val all = manager.deviceList.values
         return all.firstOrNull { it.vendorId == F75.VENDOR_ID && it.productId == F75.PRODUCT_ID }
@@ -25,31 +26,36 @@ object F75Usb {
 
     private fun hasInterface(d: UsbDevice, id: Int) = (0 until d.interfaceCount).any { d.getInterface(it).id == id }
 
-    /** Teşhis: tabletin gördüğü tüm USB cihazları. */
-    fun describeAll(manager: UsbManager): List<String> = manager.deviceList.values.map { d ->
+    data class UsbEntry(val vendorId: Int, val productId: Int, val name: String, val interfaces: String, val kind: Kind) {
+        enum class Kind { F75_WIRED, AULA_OTHER, AULA_RECEIVER, OTHER }
+        val ids: String get() = "%04x:%04x".format(vendorId, productId)
+    }
+
+    /** Diagnostics: every USB device the OS currently exposes. */
+    fun describeAll(manager: UsbManager): List<UsbEntry> = manager.deviceList.values.map { d ->
         val intfs = (0 until d.interfaceCount).joinToString(", ") {
             val i = d.getInterface(it)
-            "#${i.id} sınıf ${i.interfaceClass}"
+            "#${i.id} class ${i.interfaceClass}"
         }
-        val name = listOfNotNull(d.manufacturerName, d.productName).joinToString(" ").ifBlank { "(adsız)" }
-        val note = when {
-            d.vendorId == F75.VENDOR_ID && d.productId == F75.PRODUCT_ID -> " ← kablolu F75"
-            d.vendorId == F75.VENDOR_ID -> " ← AULA üreticisi, farklı PID"
-            d.vendorId == 0x3554 -> " ← AULA 2.4G alıcısı (ayar için kablo gerekir)"
-            else -> ""
+        val name = listOfNotNull(d.manufacturerName, d.productName).joinToString(" ").ifBlank { "—" }
+        val kind = when {
+            d.vendorId == F75.VENDOR_ID && d.productId == F75.PRODUCT_ID -> UsbEntry.Kind.F75_WIRED
+            d.vendorId == F75.VENDOR_ID -> UsbEntry.Kind.AULA_OTHER
+            d.vendorId == F75.RECEIVER_VENDOR_ID -> UsbEntry.Kind.AULA_RECEIVER
+            else -> UsbEntry.Kind.OTHER
         }
-        "%04x:%04x %s [%s]%s".format(d.vendorId, d.productId, name, intfs, note)
+        UsbEntry(d.vendorId, d.productId, name, intfs, kind)
     }
 
     fun open(manager: UsbManager, device: UsbDevice): F75Connection {
         val intf = (0 until device.interfaceCount).map { device.getInterface(it) }
             .firstOrNull { it.id == F75.CONFIG_INTERFACE && it.alternateSetting == 0 }
-            ?: throw IOException("Yapılandırma arayüzü (1) bulunamadı. Klavye kablo modunda mı?")
-        val conn = manager.openDevice(device) ?: throw IOException("USB cihazı açılamadı (izin verildi mi?)")
-        // Yalnızca yapılandırma arayüzü alınır; yazı yazan klavye arayüzü (0) dokunulmaz.
+            ?: throw ProtocolException(F75Error.INTERFACE_MISSING)
+        val conn = manager.openDevice(device) ?: throw ProtocolException(F75Error.OPEN_FAILED)
+        // Only the configuration interface is claimed; the typing interface (0) is never touched.
         if (!conn.claimInterface(intf, true)) {
             conn.close()
-            throw IOException("Arayüz 1 alınamadı. Başka bir uygulama kullanıyor olabilir.")
+            throw ProtocolException(F75Error.CLAIM_FAILED)
         }
         return F75Connection(conn, intf)
     }
@@ -62,20 +68,20 @@ class F75Connection(private val conn: UsbDeviceConnection, private val intf: Usb
         require(report.size == F75.REPORT_SIZE)
         val id = report[0].toInt() and 0xff
         val n = conn.controlTransfer(0x21, 0x09, 0x0300 or id, intf.id, report, report.size, timeoutMs)
-        if (n != report.size) throw IOException("SET_REPORT başarısız (sonuç $n)")
+        if (n != report.size) throw ProtocolException(F75Error.TRANSFER_FAILED, "SET_REPORT $n")
     }
 
     private fun getFeature(id: Int): ByteArray {
         val buf = ByteArray(F75.REPORT_SIZE)
         buf[0] = id.toByte()
         val n = conn.controlTransfer(0xA1, 0x01, 0x0300 or id, intf.id, buf, buf.size, timeoutMs)
-        if (n <= 0) throw IOException("GET_REPORT başarısız (sonuç $n)")
-        // Bazı yığınlar rapor kimliği baytını atlayabilir; masaüstü biçimine çevir.
+        if (n <= 0) throw ProtocolException(F75Error.TRANSFER_FAILED, "GET_REPORT $n")
+        // Some stacks drop the report-ID byte; restore the hidapi layout.
         if (n == F75.REPORT_SIZE - 1 && buf[0].toInt() != id) return byteArrayOf(id.toByte()) + buf.copyOf(n)
         return buf.copyOf(n)
     }
 
-    /** Okuma: istek gönder, 20 ms bekle, yanıtı al (orijinal uygulamadaki zamanlama). */
+    /** Read: send the request, wait 20 ms, fetch the reply (upstream timing). */
     @Synchronized
     override fun query(request: ByteArray): ByteArray {
         setFeature(request)
@@ -83,7 +89,7 @@ class F75Connection(private val conn: UsbDeviceConnection, private val intf: Usb
         return getFeature(F75.REPORT_ID)
     }
 
-    /** Yazma: raporu gönder, sonraki işlemden önce 70 ms bekle. */
+    /** Write: send the report and wait 70 ms before the next request (upstream timing). */
     @Synchronized
     override fun write(report: ByteArray) {
         setFeature(report)

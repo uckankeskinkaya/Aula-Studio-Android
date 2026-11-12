@@ -4,85 +4,108 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Shapes
+import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 
-// Lavanta + gök mavisi + pembe: klavyenin pastel tuşları ve mor RGB'siyle uyumlu.
-private val Dark = darkColorScheme(
-    primary = Color(0xFFB9A7FF),
-    onPrimary = Color(0xFF26185A),
-    primaryContainer = Color(0xFF3B2D7A),
-    onPrimaryContainer = Color(0xFFE6DEFF),
-    secondary = Color(0xFF8FD8FF),
-    onSecondary = Color(0xFF003549),
-    secondaryContainer = Color(0xFF16485F),
-    onSecondaryContainer = Color(0xFFC7ECFF),
-    tertiary = Color(0xFFFFA8D2),
-    onTertiary = Color(0xFF5A1238),
-    tertiaryContainer = Color(0xFF6E2A4F),
-    onTertiaryContainer = Color(0xFFFFD9E9),
-    background = Color(0xFF110E18),
-    onBackground = Color(0xFFE8E1F2),
-    surface = Color(0xFF110E18),
-    onSurface = Color(0xFFE8E1F2),
-    surfaceVariant = Color(0xFF2A2536),
-    onSurfaceVariant = Color(0xFFC9C2D6),
-    surfaceContainerLowest = Color(0xFF0C0A12),
-    surfaceContainerLow = Color(0xFF19151F),
-    surfaceContainer = Color(0xFF1E1A26),
-    surfaceContainerHigh = Color(0xFF282331),
-    surfaceContainerHighest = Color(0xFF332D3D),
-    outline = Color(0xFF8F88A0),
-    outlineVariant = Color(0xFF443D52),
+// Brand: violet primary (matches the F75's default RGB), cyan and pink accents, quiet neutral surfaces.
+private val DarkColors = darkColorScheme(
+    primary = Color(0xFFB4A5FF),
+    onPrimary = Color(0xFF221455),
+    primaryContainer = Color(0xFF392A7C),
+    onPrimaryContainer = Color(0xFFE7DEFF),
+    secondary = Color(0xFF7FD3F5),
+    onSecondary = Color(0xFF00344A),
+    secondaryContainer = Color(0xFF124B63),
+    onSecondaryContainer = Color(0xFFC6EBFF),
+    tertiary = Color(0xFFF7A6CF),
+    onTertiary = Color(0xFF55133A),
+    tertiaryContainer = Color(0xFF6E2B51),
+    onTertiaryContainer = Color(0xFFFFD8E9),
+    background = Color(0xFF0F0E13),
+    onBackground = Color(0xFFE6E1EA),
+    surface = Color(0xFF0F0E13),
+    onSurface = Color(0xFFE6E1EA),
+    surfaceVariant = Color(0xFF2A2732),
+    onSurfaceVariant = Color(0xFFC7C2D0),
+    surfaceContainerLowest = Color(0xFF0A090D),
+    surfaceContainerLow = Color(0xFF16141B),
+    surfaceContainer = Color(0xFF1B1920),
+    surfaceContainerHigh = Color(0xFF25232B),
+    surfaceContainerHighest = Color(0xFF302D36),
+    outline = Color(0xFF8E8998),
+    outlineVariant = Color(0xFF3F3B47),
     error = Color(0xFFFFB4AB),
-    errorContainer = Color(0xFF93000A),
+    errorContainer = Color(0xFF8C1D18),
     onErrorContainer = Color(0xFFFFDAD6),
 )
 
-private val Light = lightColorScheme(
-    primary = Color(0xFF6B4FE0),
+private val LightColors = lightColorScheme(
+    primary = Color(0xFF5B45D6),
     onPrimary = Color.White,
     primaryContainer = Color(0xFFE6DEFF),
-    onPrimaryContainer = Color(0xFF22126B),
-    secondary = Color(0xFF00739A),
+    onPrimaryContainer = Color(0xFF1C0C66),
+    secondary = Color(0xFF006A8E),
     onSecondary = Color.White,
-    secondaryContainer = Color(0xFFC7ECFF),
+    secondaryContainer = Color(0xFFC6EBFF),
     onSecondaryContainer = Color(0xFF001E2C),
-    tertiary = Color(0xFFB0306E),
+    tertiary = Color(0xFFA6326B),
     onTertiary = Color.White,
-    tertiaryContainer = Color(0xFFFFD9E9),
+    tertiaryContainer = Color(0xFFFFD8E9),
     onTertiaryContainer = Color(0xFF3E0024),
-    background = Color(0xFFFBF8FF),
-    onBackground = Color(0xFF1C1A22),
-    surface = Color(0xFFFBF8FF),
-    onSurface = Color(0xFF1C1A22),
-    surfaceVariant = Color(0xFFE6E0F0),
-    onSurfaceVariant = Color(0xFF48454F),
+    background = Color(0xFFF8F6FB),
+    onBackground = Color(0xFF1B1A20),
+    surface = Color(0xFFF8F6FB),
+    onSurface = Color(0xFF1B1A20),
+    surfaceVariant = Color(0xFFE5E1EC),
+    onSurfaceVariant = Color(0xFF47454F),
     surfaceContainerLowest = Color.White,
-    surfaceContainerLow = Color(0xFFF6F2FC),
-    surfaceContainer = Color(0xFFF0ECF8),
-    surfaceContainerHigh = Color(0xFFEAE6F3),
-    surfaceContainerHighest = Color(0xFFE4E0ED),
-    outline = Color(0xFF79757F),
-    outlineVariant = Color(0xFFCAC4D3),
+    surfaceContainerLow = Color(0xFFF2F0F6),
+    surfaceContainer = Color(0xFFECEAF1),
+    surfaceContainerHigh = Color(0xFFE6E4EB),
+    surfaceContainerHighest = Color(0xFFE0DEE6),
+    outline = Color(0xFF78757F),
+    outlineVariant = Color(0xFFC9C5D0),
 )
 
 private val AppShapes = Shapes(
-    extraSmall = RoundedCornerShape(8.dp),
-    small = RoundedCornerShape(12.dp),
-    medium = RoundedCornerShape(18.dp),
-    large = RoundedCornerShape(24.dp),
-    extraLarge = RoundedCornerShape(32.dp),
+    extraSmall = RoundedCornerShape(6.dp),
+    small = RoundedCornerShape(10.dp),
+    medium = RoundedCornerShape(16.dp),
+    large = RoundedCornerShape(22.dp),
+    extraLarge = RoundedCornerShape(30.dp),
 )
 
+private val AppTypography = Typography().let { t ->
+    t.copy(
+        headlineMedium = t.headlineMedium.copy(fontWeight = FontWeight.SemiBold, letterSpacing = (-0.3).sp),
+        headlineSmall = t.headlineSmall.copy(fontWeight = FontWeight.SemiBold, letterSpacing = (-0.2).sp),
+        titleLarge = t.titleLarge.copy(fontWeight = FontWeight.SemiBold),
+        titleMedium = t.titleMedium.copy(fontWeight = FontWeight.SemiBold),
+        labelLarge = t.labelLarge.copy(fontWeight = FontWeight.SemiBold),
+    )
+}
+
+/** Small uppercase section caption. */
+val CaptionStyle = TextStyle(fontSize = 12.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.8.sp)
+
 @Composable
-fun AulaTheme(content: @Composable () -> Unit) {
+fun AulaTheme(mode: ThemeMode = ThemeMode.SYSTEM, content: @Composable () -> Unit) {
+    val dark = when (mode) {
+        ThemeMode.SYSTEM -> isSystemInDarkTheme()
+        ThemeMode.LIGHT -> false
+        ThemeMode.DARK -> true
+    }
     MaterialTheme(
-        colorScheme = if (isSystemInDarkTheme()) Dark else Light,
+        colorScheme = if (dark) DarkColors else LightColors,
         shapes = AppShapes,
+        typography = AppTypography,
         content = content,
     )
 }

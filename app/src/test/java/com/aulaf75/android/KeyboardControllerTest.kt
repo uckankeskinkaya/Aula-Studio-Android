@@ -181,13 +181,13 @@ class KeyboardControllerTest {
         var d = c.applyPerKey(original, mapOf(9 to Rgb(1, 2, 3)), "p")
         d = c.applyRemap(d, Layer.FN, mapOf(9 to KeyAction(2, 0xcd)), "r")
         d = c.applyConfig(d, d.config.withSleepSeconds(60), d.palette, "s")
-        val (after, notes) = c.restore(d, original)
+        val (after, parts) = c.restore(d, original)
         assertEquals(original.config, after.config)
         assertEquals(original.palette, after.palette)
         assertEquals(original.perKey, after.perKey)
         assertEquals(original.fn, after.fn)
         assertEquals(original.base, after.base)
-        assertTrue(notes.isNotEmpty())
+        assertEquals(3, parts) // Fn keymap + per-key + lighting (base keymap was unchanged)
     }
 
     @Test fun restoreRejectsBackupThatDisablesKeys() {

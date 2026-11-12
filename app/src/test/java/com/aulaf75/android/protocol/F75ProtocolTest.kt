@@ -99,7 +99,7 @@ class F75ProtocolTest {
         val next = map.with(mapOf(9 to KeyAction(0, 5)))
         assertTrue(next.matches(9, KeyAction(0, 5)))
         for (i in 0 until 520) if (i !in 44..47) assertEquals(map.bytes[i], next.bytes[i])
-        assertThrows(ProtocolException::class.java) { map.with(mapOf(12 to KeyAction(0, 4))) }
+        assertEquals(F75Error.PROTECTED_KEY, assertThrows(ProtocolException::class.java) { map.with(mapOf(12 to KeyAction(0, 4))) }.error)
         assertThrows(ProtocolException::class.java) { map.with(mapOf(53 to KeyAction(0, 4))) }
         assertThrows(ProtocolException::class.java) { map.with(mapOf(127 to KeyAction(0, 4))) }
     }
@@ -121,7 +121,8 @@ class F75ProtocolTest {
         assertEquals(null, Keymap.parse(raw).detectLayout())
         raw[8 + 4 * 53] = 0
         assertEquals(KeyboardLayout.ISO, Keymap.parse(raw).detectLayout())
-        assertThrows(ProtocolException::class.java) { Keymap.parse(emptyKeymap(Layer.BASE)).requireLayout() }
+        val e = assertThrows(ProtocolException::class.java) { Keymap.parse(emptyKeymap(Layer.BASE)).requireLayout() }
+        assertEquals(F75Error.LAYOUT_UNKNOWN, e.error)
         // Fn katmanı düzen belirleyemez
         val fnRaw = emptyKeymap(Layer.FN).also { it[8 + 4 * 53] = 13 }
         assertEquals(null, Keymap.parse(fnRaw).detectLayout())
@@ -171,5 +172,34 @@ class F75ProtocolTest {
         val reply = F75.identityRequest().also { F75.F75_IDENTITY.copyInto(it, 8) }
         assertArrayEquals(F75.F75_IDENTITY, F75.decodeIdentity(reply))
         assertThrows(ProtocolException::class.java) { F75.decodeIdentity(reply.copyOf(13)) }
+    }
+}
+
+class KeyNamesTest {
+    @Test fun recordDecoding() {
+        fun r(vararg v: Int) = ByteArray(4) { v[it].toByte() }
+        assertEquals(KeyNames.Record.Empty, KeyNames.decode(r(0, 0, 0, 0)))
+        assertEquals(KeyNames.Record.Fn, KeyNames.decode(r(13, 0, 0, 0)))
+        assertEquals(KeyNames.Record.Key(0xe4, 0), KeyNames.decode(r(0, 0x10, 0, 0)))
+        assertEquals(KeyNames.Record.Key(6, 1), KeyNames.decode(r(0, 1, 0, 6)))
+        assertEquals(KeyNames.Record.Mouse(3), KeyNames.decode(r(1, 3, 1, 0)))
+        assertEquals(KeyNames.Record.Media(0x183), KeyNames.decode(r(2, 0, 1, 0x83)))
+        assertTrue(KeyNames.decode(r(9, 9, 9, 9)) is KeyNames.Record.Vendor)
+        // every decodable action round-trips through its record
+        for (u in KeyNames.ASSIGNABLE_KEYBOARD) {
+            val rec = KeyNames.decode(KeyAction(0, u).record())
+            assertEquals(KeyNames.Record.Key(u, 0), rec)
+        }
+        for (u in KeyNames.MEDIA_USAGES) assertEquals(KeyNames.Record.Media(u), KeyNames.decode(KeyAction(2, u).record()))
+        for (b in KeyNames.MOUSE_BUTTONS) assertEquals(KeyNames.Record.Mouse(b), KeyNames.decode(KeyAction(1, b).record()))
+    }
+
+    @Test fun turkishLegends() {
+        val iso = KeyboardLayout.ISO
+        assertEquals("Ğ", iso.keys.first { it.usage == 47 }.legend(turkish = true))
+        assertEquals("[", iso.keys.first { it.usage == 47 }.legend(turkish = false))
+        assertEquals("<", iso.keys.first { it.usage == 100 }.legend(turkish = true))
+        assertEquals("A", iso.keys.first { it.usage == 4 }.legend(turkish = true))
+        assertEquals("[  (Ğ)", KeyNames.keyboardName(47, turkishHints = true))
     }
 }
