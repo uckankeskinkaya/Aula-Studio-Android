@@ -5,7 +5,7 @@
 [Dahuum/aula-studio](https://github.com/Dahuum/aula-studio) projesinin resmî olmayan Android portu. Ayrıntılı İngilizce belge: [README.md](README.md).
 
 ## Kurulum
-1. Telefondan bu deponun **Releases** sayfasını aç ve en yeni `AULA-Studio-Android-*.apk` dosyasını indir.
+1. Telefondan [Releases](https://github.com/uckankeskinkaya/Aula-Studio-Android/releases) sayfasını aç ve en yeni `AULA-Studio-Android-*.apk` dosyasını indir.
 2. Dosyayı aç. İstenirse tarayıcıya veya dosya yöneticisine "bilinmeyen uygulamaları yükleme" izni ver.
 3. Klavyenin mod anahtarını **kablolu (USB)** konuma al. USB-C kablo veya OTG adaptörle bağla, sonra **Bağlan**'a dokun.
 

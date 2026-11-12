@@ -1,0 +1,80 @@
+name: Android
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Android SDK
+        run: echo "sdk.dir=$ANDROID_HOME" > local.properties
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Check generated translations are up to date
+        run: |
+          python3 tools/strings.py
+          git diff --exit-code -- app/src/main/res
+
+      - name: Unit, transaction and screenshot tests
+        run: ./gradlew --no-daemon testDebugUnitTest -Droborazzi.test.record=true
+
+      - name: Commit refreshed screenshots
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        continue-on-error: true
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/screenshots
+          if ! git diff --cached --quiet; then
+            git commit -m "Update screenshots [skip ci]"
+            git pull --rebase origin main
+            git push origin HEAD:main
+          fi
+
+      - name: Build release APK
+        run: ./gradlew --no-daemon assembleRelease
+
+      - name: Name APK
+        run: cp app/build/outputs/apk/release/app-release.apk "AULA-Studio-Android-0.3.${GITHUB_RUN_NUMBER}.apk"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AULA-Studio-Android-apk
+          path: AULA-Studio-Android-*.apk
+
+      - name: Publish release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v0.3.${{ github.run_number }}
+          name: AULA Studio for Android 0.3.${{ github.run_number }}
+          target_commitish: ${{ github.sha }}
+          prerelease: true
+          files: AULA-Studio-Android-*.apk
+          body: |
+            **AULA Studio for Android**: unofficial configurator for the AULA F75 (wired, USB OTG).
+
+            Download **AULA-Studio-Android-0.3.${{ github.run_number }}.apk** below and open it on your phone or tablet.
+            It installs over earlier builds (same signing key). See the [README](https://github.com/${{ github.repository }}#readme).
+
+            🇹🇷 Aşağıdaki APK dosyasını telefonuna veya tabletine indirip kur. Eski sürümün üstüne kurulur.

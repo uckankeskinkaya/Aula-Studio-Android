@@ -6,6 +6,9 @@
 
 Unofficial Android port of [AULA Studio](https://github.com/Dahuum/aula-studio) · Kotlin · Jetpack Compose · USB OTG · MIT
 
+[![Android CI](https://github.com/uckankeskinkaya/Aula-Studio-Android/actions/workflows/android.yml/badge.svg)](https://github.com/uckankeskinkaya/Aula-Studio-Android/actions/workflows/android.yml)
+[![Latest release](https://img.shields.io/github/v/release/uckankeskinkaya/Aula-Studio-Android?include_prereleases&label=APK)](https://github.com/uckankeskinkaya/Aula-Studio-Android/releases)
+
 English · [Türkçe](README.tr.md) · 简体中文 UI
 
 <img src="docs/screenshots/tablet-overview-en.png" width="860" alt="Overview on a tablet">
@@ -52,7 +55,7 @@ AULA's official configurator only runs on Windows. [Dahuum/aula-studio](https://
 
 ## Install
 
-1. Open the [latest release](../../releases) on your phone and download `AULA-Studio-Android-*.apk`.
+1. Open the [latest release](https://github.com/uckankeskinkaya/Aula-Studio-Android/releases) on your phone and download `AULA-Studio-Android-*.apk`.
 2. Open it and allow installing from your browser or file manager if Android asks.
 3. Set the keyboard's mode switch to **wired**, connect it with a USB-C cable or OTG adapter, and tap **Connect**.
 
@@ -100,7 +103,7 @@ python3 tools/strings.py         # regenerate translations after editing tools/s
 
 - **31 JVM tests** cover the protocol and transactions. They port upstream's fixtures and drive a simulated F75 to check exact bytes, write order, stale-state refusal, interrupted writes, protected keys, ISO detection and full restore.
 - **19 screenshot tests** render every screen on phone and tablet in all three languages.
-- CI ([workflow](../.github/workflows/aula-f75-android.yml)) runs everything, refreshes the screenshots and publishes a signed APK as a GitHub release.
+- CI ([workflow](.github/workflows/android.yml)) runs everything, refreshes the screenshots and publishes a signed APK as a GitHub release.
 
 ### Adding a language
 
@@ -110,7 +113,7 @@ Add a column to `tools/strings.py`, add the folder in `write(...)`, add the loca
 
 - ✅ Tested by a user on a real **ISO (Turkish-Q) F75** with an Android tablet (Xiaomi Pad 7 Pro): connection, the identity check (`03 00 00 00 00 CD`, the same as ANSI), reading every bank, and effect and color writes work.
 - 🔎 In that test, three effects (Scanning, Storm, Fade) looked dark. Their stored palette color was most likely black. Version 0.2 starts from white and refuses near-black colors; confirmation is pending.
-- ❓ Needs owners to report: the other effects, per-key RGB LED positions on ISO boards, key-mapping events on Android, and ANSI boards.
+- ❓ Needs owners to report ([hardware report template](https://github.com/uckankeskinkaya/Aula-Studio-Android/issues/new?template=hardware_report.md)): the other effects, per-key RGB LED positions on ISO boards, key-mapping events on Android, and ANSI boards.
 - 🤝 **For the aula-studio maintainers:** the `protocol/` package mirrors your crate module by module. If you'd like an official Android build, this project is offered to be merged as an `android/` directory or kept as a companion repository, whichever you prefer.
 - 🤝 **For AULA:** an official Android or web configurator, or published protocol documentation, would help many owners who don't have a PC.
 

@@ -176,7 +176,7 @@
     <string name="err_interface">The keyboard\'s configuration interface was not found. Is it in wired mode?</string>
     <string name="err_open">Could not open the keyboard. Reconnect it and try again.</string>
     <string name="err_transfer">USB communication failed. Reconnect the keyboard and try again.</string>
-    <string name="url_source" translatable="false">https://github.com/uckankeskinkaya/genel-isler/tree/ccr-bed91006-vpfhvm/aula-f75-android</string>
+    <string name="url_source" translatable="false">https://github.com/uckankeskinkaya/Aula-Studio-Android</string>
     <string name="url_upstream" translatable="false">https://github.com/Dahuum/aula-studio</string>
     <string-array name="effect_names">
         <item>Off</item>

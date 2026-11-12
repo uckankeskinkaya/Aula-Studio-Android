@@ -237,7 +237,7 @@ ARRAYS = {
 }
 
 NON_TRANSLATABLE = {
- "url_source": "https://github.com/uckankeskinkaya/genel-isler/tree/ccr-bed91006-vpfhvm/aula-f75-android",
+ "url_source": "https://github.com/uckankeskinkaya/Aula-Studio-Android",
  "url_upstream": "https://github.com/Dahuum/aula-studio",
 }
 

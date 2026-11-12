@@ -14,8 +14,9 @@ android {
         applicationId = "com.aulaf75.android"
         minSdk = 26
         targetSdk = 35
-        versionCode = 100 + buildNumber
-        versionName = "0.2.$buildNumber"
+        // 0.1.x/0.2.x were built in an earlier repository (codes up to ~110); keep codes increasing.
+        versionCode = 200 + buildNumber
+        versionName = "0.3.$buildNumber"
         // Ship only the languages the app is translated into.
         resourceConfigurations += listOf("en", "tr", "zh-rCN")
     }
